@@ -1,0 +1,7 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+[project]
+name = "elec3442-audiovision"
+requires-python = ">=3.9"

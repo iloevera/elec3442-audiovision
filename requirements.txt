@@ -1,0 +1,14 @@
+# Core computer vision
+opencv-python>=4.8.0
+numpy>=1.24.0
+
+# Object detection
+ultralytics>=8.0.0
+
+# Audio rendering
+openal-soft>=1.0.0  # system package; Python binding below
+soundfile>=0.12.1
+scipy>=1.11.0
+
+# Utilities
+dataclasses-json>=0.6.0
