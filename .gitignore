@@ -1,0 +1,26 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Test / coverage artefacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editor artefacts
+.idea/
+.vscode/
+*.swp
