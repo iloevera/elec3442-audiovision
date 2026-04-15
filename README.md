@@ -80,6 +80,7 @@ This starts a background depth tracker that:
 - tracks obstacles over time with stable IDs
 - estimates collision risk using approach velocity and projected time-to-collision (TTC)
 - drives spatial tones for collision-course obstacles only
+- opens an OpenCV depth window with tracked obstacle overlays
 
 Audio mapping in this demo:
 - higher volume for lower projected TTC (more imminent collision)
@@ -91,7 +92,7 @@ IMU mode options:
 - force depth-only mode: `python .\demo_obstacle_audio_tracking.py --disable-imu`
 - require IMU (fail if unavailable): `python .\demo_obstacle_audio_tracking.py --require-imu`
 
-Press `Ctrl+C` to stop.
+Press `Ctrl+C` to stop, or focus the OpenCV window and press `q` or `Esc`.
 
 ## Obstacle Tracker Output Contract
 
