@@ -7,7 +7,6 @@ Small Python project for:
 ## Files
 
 - `realsense_driver.py`: reusable `D435iDriver` class with preview mode
-- `audio.py`: convenience export for `SpatialTone`
 - `audio_spatial_tone.py`: continuously playing tone class with live pitch, volume, and azimuth control
 - `audio_mixer.py`: shared audio output mixer for multiple simultaneous tones
 - `demo_audio_rotating_tones.py`: rotating stereo tone demo
@@ -82,7 +81,7 @@ with D435iDriver() as driver:
 ### Use the spatial audio tone class
 
 ```python
-from audio import SpatialTone
+from audio_spatial_tone import SpatialTone
 
 tone = SpatialTone(initial_pitch_hz=440.0, initial_volume=0.2, initial_azimuth_deg=0.0)
 tone.start()
