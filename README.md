@@ -1,12 +1,13 @@
 # RealSense Test
 
 Small Python project for:
-- Intel RealSense D435i depth/color capture with an optional IMU fallback
+- Intel RealSense D435i depth/color capture with IMU support
 - simple spatial audio tone generation and demo playback
 
 ## Files
 
-- `realsense_driver.py`: reusable `D435iDriver` class with preview mode
+- `realsense_driver.py`: reusable `D435iDriver` class for depth/color/IMU capture
+- `demo_realsense_preview.py`: OpenCV preview demo for color, depth, and IMU telemetry
 - `audio_spatial_tone.py`: continuously playing tone class with live pitch, volume, and azimuth control
 - `audio_mixer.py`: shared audio output mixer for multiple simultaneous tones
 - `demo_audio_rotating_tones.py`: rotating stereo tone demo
@@ -15,7 +16,7 @@ Small Python project for:
 
 - Windows with Python 3.10 or 3.11 recommended
 - Intel RealSense D435i connected over USB 3 if you want camera access
-- RealSense depth/color work without IMU if IMU stream negotiation fails
+- The default driver configuration expects a D435i with working IMU streams
 - Speakers or headphones for the audio demo
 
 Python packages are listed in `requirements.txt`.
@@ -43,14 +44,14 @@ python -m pip install -r requirements.txt
 Typical things that matter for successful camera startup:
 - use a direct USB 3 port rather than a low-bandwidth hub
 - use a D435i if you expect IMU data
-- if IMU cannot be started, this branch automatically falls back to depth/color only
+- if IMU is enabled and cannot be started, driver startup fails immediately
 
 ## Run
 
 ### RealSense preview
 
 ```powershell
-python .\realsense_driver.py
+python .\demo_realsense_preview.py
 ```
 
 This opens a preview window with color and depth. Press `q` or `Esc` to exit.
@@ -77,6 +78,8 @@ with D435iDriver() as driver:
         print(bundle.depth.image.shape)
         print(driver.imu_enabled_runtime)
 ```
+
+Pass `enable_imu=False` if you explicitly want depth/color only on a non-IMU RealSense device.
 
 ### Use the spatial audio tone class
 

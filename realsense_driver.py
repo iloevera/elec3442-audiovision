@@ -8,9 +8,12 @@ import threading
 import time
 from typing import Optional
 
-import cv2
 import numpy as np
 import pyrealsense2 as rs
+
+
+PREFERRED_ACCEL_FPS = (250, 200, 100, 400)
+PREFERRED_GYRO_FPS = (200, 400)
 
 
 @dataclass(frozen=True)
@@ -66,6 +69,14 @@ class FrameBundle:
     imu_samples: tuple[IMUSample, ...]
     latest_accel: Optional[IMUSample]
     latest_gyro: Optional[IMUSample]
+
+
+@dataclass(frozen=True)
+class MotionRuntimeConfig:
+    serial_number: Optional[str]
+    device_name: Optional[str]
+    accel_fps: int
+    gyro_fps: int
 
 
 class D435iDriver:
@@ -160,36 +171,33 @@ class D435iDriver:
             if self._running:
                 return
 
-        requested_imu = self.enable_imu
-        runtime_imu_enabled = requested_imu
-        start_error: Optional[RuntimeError] = None
-
         self._pipeline = rs.pipeline()
-        self._config = self._build_config(enable_imu=requested_imu)
+        runtime_config = self._resolve_motion_runtime_config()
+
+        self._config = self._build_config(
+            enable_imu=self.enable_imu,
+            serial_number=runtime_config.serial_number,
+            accel_fps=runtime_config.accel_fps,
+            gyro_fps=runtime_config.gyro_fps,
+        )
 
         try:
             profile = self._pipeline.start(self._config)
         except RuntimeError as exc:
-            if not requested_imu:
+            if not self.enable_imu:
                 raise
 
-            start_error = exc
-            runtime_imu_enabled = False
-            self._pipeline = rs.pipeline()
-            self._config = self._build_config(enable_imu=False)
-
-            try:
-                profile = self._pipeline.start(self._config)
-            except RuntimeError as fallback_exc:
-                raise RuntimeError(
-                    "Failed to start RealSense with depth/color/IMU, and fallback without IMU also failed. "
-                    "Check USB bandwidth, connected device model, and supported stream profiles."
-                ) from fallback_exc
+            raise RuntimeError(
+                "Failed to start the RealSense depth/color/IMU pipeline. "
+                f"Selected accel={runtime_config.accel_fps} Hz, gyro={runtime_config.gyro_fps} Hz "
+                f"on device {runtime_config.device_name or 'unknown'} ({runtime_config.serial_number}). "
+                "Check that the D435i is connected over USB 3 and no other application is using the device."
+            ) from exc
 
         try:
-            self._imu_enabled_runtime = runtime_imu_enabled
+            self._imu_enabled_runtime = self.enable_imu
             self._initialize_device_metadata(profile)
-            self._warm_up_pipeline()
+            self._warm_up_pipeline(require_imu=self.enable_imu)
         except Exception:
             self._pipeline.stop()
             self._imu_enabled_runtime = False
@@ -197,14 +205,14 @@ class D435iDriver:
 
         with self._lock:
             self._pipeline_profile = profile
-            self._imu_enabled_runtime = runtime_imu_enabled
+            self._imu_enabled_runtime = self.enable_imu
             self._latest_bundle = None
             self._bundle_sequence = 0
             self._pending_imu_samples.clear()
             self._imu_history.clear()
             self._latest_accel = None
             self._latest_gyro = None
-            self._last_error = start_error if not runtime_imu_enabled and start_error is not None else None
+            self._last_error = None
             self._running = True
             self._stop_event.clear()
 
@@ -218,7 +226,6 @@ class D435iDriver:
     def stop(self) -> None:
         with self._lock:
             if not self._running and self._capture_thread is None:
-                cv2.destroyAllWindows()
                 return
             self._running = False
             self._stop_event.set()
@@ -233,8 +240,6 @@ class D435iDriver:
             self._pipeline.stop()
         except RuntimeError:
             pass
-        finally:
-            cv2.destroyAllWindows()
 
         with self._lock:
             self._pipeline_profile = None
@@ -286,54 +291,17 @@ class D435iDriver:
 
         return float(current_bundle.depth.image[y, x]) * current_bundle.depth.depth_scale
 
-    def run_preview(self, window_name: str = "RealSense D435i") -> None:
-        auto_started = False
-        if not self.is_running:
-            self.start()
-            auto_started = True
-
-        try:
-            while True:
-                bundle = self.wait_for_bundle(timeout_s=1.0)
-                if bundle is None:
-                    if self.last_error is not None:
-                        raise RuntimeError("Capture thread stopped after an error") from self.last_error
-                    continue
-
-                depth_color = cv2.applyColorMap(
-                    cv2.convertScaleAbs(bundle.depth.image, alpha=0.03),
-                    cv2.COLORMAP_JET,
-                )
-                color_image = bundle.color.image
-
-                if color_image.shape[:2] != depth_color.shape[:2]:
-                    depth_color = cv2.resize(depth_color, (color_image.shape[1], color_image.shape[0]))
-
-                preview = np.hstack((color_image, depth_color))
-                imu_state = "on" if self.imu_enabled_runtime else "off"
-                imu_text = f"IMU: {imu_state} | bundle samples: {len(bundle.imu_samples)}"
-                cv2.putText(
-                    preview,
-                    imu_text,
-                    (12, 24),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7,
-                    (255, 255, 255),
-                    2,
-                    cv2.LINE_AA,
-                )
-                cv2.imshow(window_name, preview)
-
-                key = cv2.waitKey(1) & 0xFF
-                if key in (27, ord("q")):
-                    break
-        finally:
-            cv2.destroyAllWindows()
-            if auto_started:
-                self.stop()
-
-    def _build_config(self, *, enable_imu: bool) -> rs.config:
+    def _build_config(
+        self,
+        *,
+        enable_imu: bool,
+        serial_number: Optional[str],
+        accel_fps: int,
+        gyro_fps: int,
+    ) -> rs.config:
         config = rs.config()
+        if serial_number is not None:
+            config.enable_device(serial_number)
         config.enable_stream(
             rs.stream.depth,
             self.depth_size[0],
@@ -349,9 +317,103 @@ class D435iDriver:
             self.color_fps,
         )
         if enable_imu:
-            config.enable_stream(rs.stream.accel, rs.format.motion_xyz32f, self.accel_fps)
-            config.enable_stream(rs.stream.gyro, rs.format.motion_xyz32f, self.gyro_fps)
+            config.enable_stream(rs.stream.accel, rs.format.motion_xyz32f, accel_fps)
+            config.enable_stream(rs.stream.gyro, rs.format.motion_xyz32f, gyro_fps)
         return config
+
+    def _resolve_motion_runtime_config(self) -> MotionRuntimeConfig:
+        if not self.enable_imu:
+            return MotionRuntimeConfig(
+                serial_number=None,
+                device_name=None,
+                accel_fps=self.accel_fps,
+                gyro_fps=self.gyro_fps,
+            )
+
+        motion_device = self._find_motion_device()
+        return MotionRuntimeConfig(
+            serial_number=motion_device.get_info(rs.camera_info.serial_number),
+            device_name=motion_device.get_info(rs.camera_info.name),
+            accel_fps=self._choose_stream_fps(
+                motion_device,
+                stream_type=rs.stream.accel,
+                requested_fps=self.accel_fps,
+                preferred_fps=PREFERRED_ACCEL_FPS,
+            ),
+            gyro_fps=self._choose_stream_fps(
+                motion_device,
+                stream_type=rs.stream.gyro,
+                requested_fps=self.gyro_fps,
+                preferred_fps=PREFERRED_GYRO_FPS,
+            ),
+        )
+
+    @staticmethod
+    def _find_motion_device() -> rs.device:
+        context = rs.context()
+        devices = context.query_devices()
+
+        if len(devices) == 0:
+            raise RuntimeError("No Intel RealSense device detected. Connect a D435i and try again.")
+
+        for device in devices:
+            if D435iDriver._device_has_stream(device, rs.stream.accel) and D435iDriver._device_has_stream(
+                device, rs.stream.gyro
+            ):
+                return device
+
+        raise RuntimeError(
+            "A RealSense device was found, but it does not expose both accelerometer and gyroscope streams. "
+            "Use an Intel RealSense D435i."
+        )
+
+    @staticmethod
+    def _device_has_stream(device: rs.device, stream_type: rs.stream) -> bool:
+        for sensor in device.sensors:
+            for profile in sensor.get_stream_profiles():
+                if profile.stream_type() == stream_type:
+                    return True
+        return False
+
+    @staticmethod
+    def _stream_fps_options(device: rs.device, stream_type: rs.stream) -> set[int]:
+        options: set[int] = set()
+        for sensor in device.sensors:
+            for profile in sensor.get_stream_profiles():
+                if profile.stream_type() == stream_type:
+                    options.add(profile.fps())
+        return options
+
+    @staticmethod
+    def _stream_label(stream_type: rs.stream) -> str:
+        if stream_type == rs.stream.accel:
+            return "accel"
+        if stream_type == rs.stream.gyro:
+            return "gyro"
+        return str(stream_type)
+
+    @classmethod
+    def _choose_stream_fps(
+        cls,
+        device: rs.device,
+        *,
+        stream_type: rs.stream,
+        requested_fps: int,
+        preferred_fps: tuple[int, ...],
+    ) -> int:
+        options = cls._stream_fps_options(device, stream_type)
+        if requested_fps in options:
+            return requested_fps
+
+        selected_fps = next((fps for fps in preferred_fps if fps in options), None)
+        if selected_fps is not None:
+            return selected_fps
+
+        stream_label = cls._stream_label(stream_type)
+        raise RuntimeError(
+            f"Could not find a supported {stream_label} stream configuration on this device. "
+            f"Requested {stream_label}={requested_fps}; available options: {sorted(options)}"
+        )
 
     def _initialize_device_metadata(self, profile: rs.pipeline_profile) -> None:
         device = profile.get_device()
@@ -372,10 +434,29 @@ class D435iDriver:
             color_profile.get_extrinsics_to(depth_profile)
         )
 
-    def _warm_up_pipeline(self) -> None:
+    def _warm_up_pipeline(self, *, require_imu: bool) -> None:
+        saw_accel = False
+        saw_gyro = False
+
         for _ in range(self.warmup_frames):
             frames = self._pipeline.wait_for_frames(timeout_ms=self.frame_timeout_ms)
-            self._extract_imu_samples(frames, time.monotonic())
+            motion_samples = self._extract_imu_samples(frames, time.monotonic())
+            for sample in motion_samples:
+                if sample.stream_name == "accel":
+                    saw_accel = True
+                elif sample.stream_name == "gyro":
+                    saw_gyro = True
+
+        if require_imu and (not saw_accel or not saw_gyro):
+            missing_streams: list[str] = []
+            if not saw_accel:
+                missing_streams.append("accel")
+            if not saw_gyro:
+                missing_streams.append("gyro")
+            raise RuntimeError(
+                "IMU pipeline started but did not produce all required motion streams during warmup. "
+                f"Missing: {', '.join(missing_streams)}"
+            )
 
     def _capture_loop(self) -> None:
         while not self._stop_event.is_set():
@@ -462,14 +543,18 @@ class D435iDriver:
         if not self._imu_enabled_runtime:
             return motion_samples
 
-        for stream_name, stream_type in (("accel", rs.stream.accel), ("gyro", rs.stream.gyro)):
-            motion_frame = self._get_motion_frame(frames, stream_type)
-            if motion_frame is None:
+        for frame in frames:
+            if not frame.is_motion_frame():
+                continue
+
+            motion_frame = frame.as_motion_frame()
+            sample_stream_name = self._stream_label(frame.get_profile().stream_type())
+            if sample_stream_name not in {"accel", "gyro"}:
                 continue
 
             motion_data = motion_frame.get_motion_data()
             sample = IMUSample(
-                stream_name=stream_name,
+                stream_name=sample_stream_name,
                 xyz=np.array([motion_data.x, motion_data.y, motion_data.z], dtype=np.float32),
                 timestamp_ms=float(motion_frame.get_timestamp()),
                 host_timestamp_s=host_timestamp_s,
@@ -479,30 +564,12 @@ class D435iDriver:
 
             with self._lock:
                 self._imu_history.append(sample)
-                if stream_name == "accel":
+                if sample_stream_name == "accel":
                     self._latest_accel = sample
                 else:
                     self._latest_gyro = sample
 
         return motion_samples
-
-    @staticmethod
-    def _get_motion_frame(
-        frames: rs.composite_frame,
-        stream_type: rs.stream,
-    ) -> Optional[rs.motion_frame]:
-        frame = None
-        if hasattr(frames, "first_or_default"):
-            frame = frames.first_or_default(stream_type)
-        else:
-            try:
-                frame = frames.first(stream_type)
-            except RuntimeError:
-                frame = None
-
-        if not frame:
-            return None
-        return frame.as_motion_frame()
 
     @staticmethod
     def _convert_intrinsics(intrinsics: rs.intrinsics) -> CameraIntrinsics:
@@ -526,5 +593,4 @@ class D435iDriver:
 
 
 if __name__ == "__main__":
-    with D435iDriver() as driver:
-        driver.run_preview()
+    raise SystemExit("Run demo_realsense_preview.py for the OpenCV preview demo.")
