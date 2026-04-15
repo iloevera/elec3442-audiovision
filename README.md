@@ -3,6 +3,7 @@
 Small Python project for:
 - Intel RealSense D435i depth/color capture with an optional IMU fallback
 - simple spatial audio tone generation and demo playback
+- real-time 3D obstacle tracking and collision-course sonification from depth + optional IMU
 
 ## Files
 
@@ -10,6 +11,11 @@ Small Python project for:
 - `audio_spatial_tone.py`: continuously playing tone class with live pitch, volume, and azimuth control
 - `audio_mixer.py`: shared audio output mixer for multiple simultaneous tones
 - `demo_audio_rotating_tones.py`: rotating stereo tone demo
+- `obstacle_models.py`: data contracts for obstacle detections, tracks, and callback payloads
+- `imu_compensation.py`: short-horizon gyro-based camera motion compensation helpers
+- `obstacle_tracker.py`: depth segmentation, temporal tracking, collision scoring, and callback service
+- `obstacle_audio_adapter.py`: maps collision-course obstacles to `SpatialTone` controls
+- `demo_obstacle_audio_tracking.py`: end-to-end D435i obstacle tracker + audio demo
 
 ## Requirements
 
@@ -62,6 +68,45 @@ python .\demo_audio_rotating_tones.py
 ```
 
 This starts two rotating tones. Press `Ctrl+C` to stop.
+
+### Obstacle tracking + audio demo
+
+```powershell
+python .\demo_obstacle_audio_tracking.py
+```
+
+This starts a background depth tracker that:
+- segments obstacles from depth
+- tracks obstacles over time with stable IDs
+- estimates collision risk using approach velocity and projected time-to-collision (TTC)
+- drives spatial tones for collision-course obstacles only
+
+Audio mapping in this demo:
+- higher volume for lower projected TTC (more imminent collision)
+- higher pitch for closer physical distance
+- stereo azimuth from obstacle horizontal angle
+
+IMU mode options:
+- default: attempts IMU when available, otherwise automatically runs depth-only (works on D435)
+- force depth-only mode: `python .\demo_obstacle_audio_tracking.py --disable-imu`
+- require IMU (fail if unavailable): `python .\demo_obstacle_audio_tracking.py --require-imu`
+
+Press `Ctrl+C` to stop.
+
+## Obstacle Tracker Output Contract
+
+The callback payload is `ObstacleUpdate` from `obstacle_models.py`.
+Each entry in `ObstacleUpdate.obstacles` is a `TrackedObstacle` containing:
+- `obstacle_id`: stable integer track ID
+- `xyz_m`: obstacle position in camera frame meters `[x, y, z]`
+- `confidence`: tracking confidence score `[0, 1]`
+- `distance_m`: Euclidean distance from camera
+- `approach_rate_mps`: positive radial closing speed
+- `ttc_s`: projected time-to-collision in seconds (`inf` when not closing)
+- `collision_score`: normalized threat score `[0, 1]`
+- `is_collision_course`: true when obstacle meets collision-course criteria
+
+This output is intended to be consumed by the audio synthesis layer or any other real-time consumer.
 
 ## Import Examples
 
