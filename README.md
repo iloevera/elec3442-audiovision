@@ -3,6 +3,7 @@
 Small Python project for:
 - Intel RealSense D435i depth/color capture with IMU support
 - simple spatial audio tone generation and demo playback
+- early assistive-navigation pipeline with IMU-guided ground subtraction, Q1 grid depth, and TTC-driven audio cues
 
 ## Files
 
@@ -11,6 +12,9 @@ Small Python project for:
 - `audio_spatial_tone.py`: continuously playing tone class with live pitch, volume, and azimuth control
 - `audio_mixer.py`: shared audio output mixer for multiple simultaneous tones
 - `demo_audio_rotating_tones.py`: rotating stereo tone demo
+- `navigation_processing.py`: depth+IMU obstacle analysis, Q1 grid statistics, and TTC estimation
+- `navigation_audio.py`: column-based pulsed audio controller for navigation cues
+- `demo_navigation_assist.py`: end-to-end depth/IMU/audio debug demo with OpenCV overlay
 
 ## Requirements
 
@@ -63,6 +67,16 @@ python .\demo_audio_rotating_tones.py
 ```
 
 This starts two rotating tones. Press `Ctrl+C` to stop.
+
+### Assistive navigation demo
+
+```powershell
+python .\demo_navigation_assist.py
+```
+
+This starts the first end-to-end navigation prototype. It uses depth + IMU data to estimate a ground plane, segments remaining obstacles into a 3x5 grid, computes first-quartile depth and TTC per sector, and drives a five-column spatial audio soundscape. Press `q` or `Esc` to exit the preview window.
+
+Use `--no-preview` if you want audio without the OpenCV debug window.
 
 ## Import Examples
 
