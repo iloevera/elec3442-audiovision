@@ -116,7 +116,7 @@ def draw_grid(image: np.ndarray, analysis: NavigationFrameAnalysis) -> None:
             color = risk_to_bgr(risk)
             cv2.rectangle(image, (x0, y0), (x1, y1), color, 1)
 
-            depth_value = analysis.q1_depth_grid_m[row, col]
+            depth_value = analysis.percentile_depth_grid_m[row, col]
             ttc_value = analysis.ttc_grid_s[row, col]
             label = f"R{risk:0.2f}"
             if np.isfinite(depth_value):
@@ -143,7 +143,7 @@ def build_info_panel(analysis: NavigationFrameAnalysis, width: int) -> np.ndarra
 
     cv2.putText(
         panel,
-        "Assistive Navigation: depth + IMU + Q1/TTC grid",
+        f"Assistive Navigation: depth + IMU + P{analysis.depth_percentile:g}/TTC grid",
         (18, 28),
         cv2.FONT_HERSHEY_DUPLEX,
         0.8,
@@ -192,7 +192,7 @@ def build_info_panel(analysis: NavigationFrameAnalysis, width: int) -> np.ndarra
         lines = [
             f"Col {column_state.col}  az={column_state.azimuth_deg: .0f}",
             f"risk={column_state.risk_score:0.2f}  vol={column_state.volume:0.2f}",
-            f"q1={format_optional(column_state.q1_depth_m, 'm')}  ttc={format_optional(column_state.ttc_s, 's')}",
+            f"p{analysis.depth_percentile:g}={format_optional(column_state.percentile_depth_m, 'm')}  ttc={format_optional(column_state.ttc_s, 's')}",
             f"pitch={column_state.pitch_hz:0.0f}Hz  urgency={column_state.pulse_hz:0.1f}",
         ]
         for index, line in enumerate(lines):

@@ -15,7 +15,7 @@ class NavigationCellState:
     col: int
     sample_count: int
     obstacle_fraction: float
-    q1_depth_m: Optional[float]
+    percentile_depth_m: Optional[float]
     approach_speed_mps: float
     ttc_s: Optional[float]
     risk_score: float
@@ -27,7 +27,7 @@ class NavigationColumnState:
     azimuth_deg: float
     sample_count: int
     risk_score: float
-    q1_depth_m: Optional[float]
+    percentile_depth_m: Optional[float]
     ttc_s: Optional[float]
     pitch_hz: float
     pulse_hz: float
@@ -54,7 +54,8 @@ class NavigationFrameAnalysis:
     ground_plane: Optional[GroundPlaneEstimate]
     cell_states: tuple[NavigationCellState, ...]
     column_states: tuple[NavigationColumnState, ...]
-    q1_depth_grid_m: np.ndarray
+    depth_percentile: float
+    percentile_depth_grid_m: np.ndarray
     ttc_grid_s: np.ndarray
     risk_grid: np.ndarray
 
@@ -75,6 +76,7 @@ class NavigationProcessorConfig:
     floor_clearance_m: float = 0.04
     dropoff_clearance_m: float = 0.08
     min_obstacle_points_per_cell: int = 6
+    depth_percentile: float = 5.0
     occupancy_denominator: int = 80
     ttc_min_speed_mps: float = 0.05
     ttc_horizon_s: float = 3.0
@@ -97,6 +99,8 @@ class NavigationProcessorConfig:
     def __post_init__(self) -> None:
         if self.rows <= 0 or self.cols <= 0:
             raise ValueError("rows and cols must be positive")
+        if not 0.0 <= self.depth_percentile <= 100.0:
+            raise ValueError("depth_percentile must be in range [0, 100]")
         if len(self.column_row_weights) != self.rows:
             weights = [1.0] * self.rows
             object.__setattr__(self, "column_row_weights", tuple(weights))
@@ -155,7 +159,7 @@ class NavigationProcessor:
                 | (height_above_ground_m < -self.config.dropoff_clearance_m)
             )
 
-        q1_depth_grid = np.full((self.config.rows, self.config.cols), np.nan, dtype=np.float32)
+        percentile_depth_grid = np.full((self.config.rows, self.config.cols), np.nan, dtype=np.float32)
         ttc_grid = np.full((self.config.rows, self.config.cols), np.nan, dtype=np.float32)
         risk_grid = np.zeros((self.config.rows, self.config.cols), dtype=np.float32)
         cell_states: list[NavigationCellState] = []
@@ -174,22 +178,22 @@ class NavigationProcessor:
                 sample_count = int(cell_depths.size)
                 valid_count = int(np.count_nonzero(cell_valid_mask))
                 obstacle_fraction = sample_count / max(1, valid_count)
-                q1_depth = self._q1_depth(cell_depths)
+                percentile_depth = self._depth_percentile(cell_depths)
                 approach_speed_mps, ttc_s = self._update_ttc(
                     row=row,
                     col=col,
                     timestamp_s=timestamp_s,
-                    q1_depth_m=q1_depth,
+                    percentile_depth_m=percentile_depth,
                 )
                 risk_score = self._compute_risk(
-                    q1_depth_m=q1_depth,
+                    percentile_depth_m=percentile_depth,
                     ttc_s=ttc_s,
                     sample_count=sample_count,
                     obstacle_fraction=obstacle_fraction,
                 )
 
-                if q1_depth is not None:
-                    q1_depth_grid[row, col] = q1_depth
+                if percentile_depth is not None:
+                    percentile_depth_grid[row, col] = percentile_depth
                 if ttc_s is not None:
                     ttc_grid[row, col] = ttc_s
                 risk_grid[row, col] = risk_score
@@ -199,7 +203,7 @@ class NavigationProcessor:
                         col=col,
                         sample_count=sample_count,
                         obstacle_fraction=obstacle_fraction,
-                        q1_depth_m=q1_depth,
+                        percentile_depth_m=percentile_depth,
                         approach_speed_mps=approach_speed_mps,
                         ttc_s=ttc_s,
                         risk_score=risk_score,
@@ -218,7 +222,8 @@ class NavigationProcessor:
             ground_plane=plane,
             cell_states=tuple(cell_states),
             column_states=tuple(column_states),
-            q1_depth_grid_m=q1_depth_grid,
+            depth_percentile=self.config.depth_percentile,
+            percentile_depth_grid_m=percentile_depth_grid,
             ttc_grid_s=ttc_grid,
             risk_grid=risk_grid,
         )
@@ -339,11 +344,10 @@ class NavigationProcessor:
     def _plane_signed_distance(points: np.ndarray, normal: np.ndarray, offset: float) -> np.ndarray:
         return np.tensordot(points, normal, axes=([-1], [0])) + float(offset)
 
-    @staticmethod
-    def _q1_depth(depth_values_m: np.ndarray) -> Optional[float]:
+    def _depth_percentile(self, depth_values_m: np.ndarray) -> Optional[float]:
         if depth_values_m.size == 0:
             return None
-        return float(np.percentile(depth_values_m, 25.0))
+        return float(np.percentile(depth_values_m, self.config.depth_percentile))
 
     def _update_ttc(
         self,
@@ -351,13 +355,13 @@ class NavigationProcessor:
         row: int,
         col: int,
         timestamp_s: float,
-        q1_depth_m: Optional[float],
+        percentile_depth_m: Optional[float],
     ) -> tuple[float, Optional[float]]:
         history = self._cell_history[(row, col)]
         approach_speed_mps = 0.0
         ttc_s: Optional[float] = None
 
-        if q1_depth_m is None:
+        if percentile_depth_m is None:
             history.depth_m = None
             history.timestamp_s = timestamp_s
             return approach_speed_mps, ttc_s
@@ -368,29 +372,29 @@ class NavigationProcessor:
             and timestamp_s > history.timestamp_s
         ):
             dt = timestamp_s - history.timestamp_s
-            approach_speed_mps = max(0.0, (history.depth_m - q1_depth_m) / dt)
+            approach_speed_mps = max(0.0, (history.depth_m - percentile_depth_m) / dt)
             if approach_speed_mps >= self.config.ttc_min_speed_mps:
-                ttc_s = q1_depth_m / approach_speed_mps
+                ttc_s = percentile_depth_m / approach_speed_mps
 
-        history.depth_m = q1_depth_m
+        history.depth_m = percentile_depth_m
         history.timestamp_s = timestamp_s
         return approach_speed_mps, ttc_s
 
     def _compute_risk(
         self,
         *,
-        q1_depth_m: Optional[float],
+        percentile_depth_m: Optional[float],
         ttc_s: Optional[float],
         sample_count: int,
         obstacle_fraction: float,
     ) -> float:
-        if q1_depth_m is None:
+        if percentile_depth_m is None:
             return 0.0
         if sample_count < self.config.min_obstacle_points_per_cell:
             return 0.0
 
         proximity_span = max(1e-6, self.config.proximity_far_m - self.config.proximity_near_m)
-        proximity_score = 1.0 - ((q1_depth_m - self.config.proximity_near_m) / proximity_span)
+        proximity_score = 1.0 - ((percentile_depth_m - self.config.proximity_near_m) / proximity_span)
         proximity_score = float(np.clip(proximity_score, 0.0, 1.0))
 
         if ttc_s is None or not np.isfinite(ttc_s):
@@ -439,7 +443,7 @@ class NavigationProcessor:
                 default=None,
             )
 
-            depth_m = best_cell.q1_depth_m if best_cell is not None else None
+            depth_m = best_cell.percentile_depth_m if best_cell is not None else None
             ttc_s = best_cell.ttc_s if best_cell is not None else None
             sample_count = sum(cell.sample_count for cell in column_cells)
             pitch_hz = self._risk_to_pitch(depth_m, column_risk)
@@ -451,7 +455,7 @@ class NavigationProcessor:
                     azimuth_deg=float(azimuths[col]),
                     sample_count=sample_count,
                     risk_score=column_risk,
-                    q1_depth_m=depth_m,
+                    percentile_depth_m=depth_m,
                     ttc_s=ttc_s,
                     pitch_hz=pitch_hz,
                     pulse_hz=pulse_hz,

@@ -60,8 +60,8 @@ class NavigationAudioController:
                 continue
 
             near_hazard = (
-                state.q1_depth_m is not None
-                and state.q1_depth_m <= self.config.near_priority_distance_m
+                state.percentile_depth_m is not None
+                and state.percentile_depth_m <= self.config.near_priority_distance_m
             )
             approaching_hazard = (
                 state.ttc_s is not None
