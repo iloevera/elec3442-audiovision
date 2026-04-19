@@ -5,7 +5,7 @@ from contextlib import suppress
 import cv2
 import numpy as np
 
-from realsense_driver import D435iDriver, FrameBundle, IMUSample
+from src.realsense_driver import D435iDriver, FrameBundle, IMUSample
 
 
 WINDOW_NAME = "RealSense D435i"

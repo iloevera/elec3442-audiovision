@@ -8,7 +8,7 @@ from typing import Optional
 
 import numpy as np
 
-from audio_mixer import get_shared_mixer
+from .audio_mixer import get_shared_mixer
 
 
 class SpatialTone:

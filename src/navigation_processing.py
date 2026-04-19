@@ -6,7 +6,7 @@ from typing import Optional
 
 import numpy as np
 
-from realsense_driver import CameraIntrinsics, FrameBundle
+from .realsense_driver import CameraIntrinsics, FrameBundle
 
 
 @dataclass(frozen=True)

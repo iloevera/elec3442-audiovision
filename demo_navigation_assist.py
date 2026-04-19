@@ -9,11 +9,11 @@ from typing import TYPE_CHECKING
 import cv2
 import numpy as np
 
-from navigation_processing import NavigationFrameAnalysis, NavigationProcessor, NavigationProcessorConfig
-from realsense_driver import D435iDriver
+from src.navigation_processing import NavigationFrameAnalysis, NavigationProcessor, NavigationProcessorConfig
+from src.realsense_driver import D435iDriver
 
 if TYPE_CHECKING:
-    from navigation_audio import NavigationAudioController
+    from src.navigation_audio import NavigationAudioController
 
 
 WINDOW_NAME = "Assistive Navigation Debug"
@@ -147,7 +147,7 @@ def run_demo() -> None:
 
                 if audio_enabled and audio is None:
                     # Delay audio import/startup until after first camera bundle arrives.
-                    from navigation_audio import NavigationAudioController
+                    from src.navigation_audio import NavigationAudioController
 
                     audio = NavigationAudioController(column_count=processor.config.cols)
                     audio.start()

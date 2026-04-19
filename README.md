@@ -7,13 +7,13 @@ Small Python project for:
 
 ## Files
 
-- `realsense_driver.py`: reusable `D435iDriver` class for depth/color/IMU capture
+- `src/realsense_driver.py`: reusable `D435iDriver` class for depth/color/IMU capture
 - `demo_realsense_preview.py`: OpenCV preview demo for color, depth, and IMU telemetry
-- `audio_spatial_tone.py`: continuously playing tone class with live pitch, volume, and azimuth control
-- `audio_mixer.py`: shared audio output mixer for multiple simultaneous tones
+- `src/audio_spatial_tone.py`: continuously playing tone class with live pitch, volume, and azimuth control
+- `src/audio_mixer.py`: shared audio output mixer for multiple simultaneous tones
 - `demo_audio_rotating_tones.py`: rotating stereo tone demo
-- `navigation_processing.py`: depth+IMU obstacle analysis, configurable percentile-depth grid statistics, and TTC estimation
-- `navigation_audio.py`: column-based pulsed audio controller for navigation cues
+- `src/navigation_processing.py`: depth+IMU obstacle analysis, configurable percentile-depth grid statistics, and TTC estimation
+- `src/navigation_audio.py`: column-based pulsed audio controller for navigation cues
 - `demo_navigation_assist.py`: end-to-end depth/IMU/audio debug demo with OpenCV overlay
 
 ## Requirements
@@ -110,7 +110,7 @@ Overrides:
 ### Use the RealSense driver in your own code
 
 ```python
-from realsense_driver import D435iDriver
+from src.realsense_driver import D435iDriver
 
 with D435iDriver() as driver:
     bundle = driver.wait_for_bundle(timeout_s=2.0)
@@ -125,7 +125,7 @@ Pass `enable_imu=False` if you explicitly want depth/color only on a non-IMU Rea
 ### Use the spatial audio tone class
 
 ```python
-from audio_spatial_tone import SpatialTone
+from src.audio_spatial_tone import SpatialTone
 
 tone = SpatialTone(initial_pitch_hz=440.0, initial_volume=0.2, initial_azimuth_deg=0.0)
 tone.start()

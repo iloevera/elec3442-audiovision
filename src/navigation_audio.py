@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import time
 
-from audio_spatial_tone import SpatialTone
-from navigation_processing import NavigationColumnState
+from .audio_spatial_tone import SpatialTone
+from .navigation_processing import NavigationColumnState
 
 
 @dataclass(frozen=True)

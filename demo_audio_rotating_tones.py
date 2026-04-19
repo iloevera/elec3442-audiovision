@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import time
 
-from audio_spatial_tone import SpatialTone
+from src.audio_spatial_tone import SpatialTone
 
 
 def run_demo() -> None:
