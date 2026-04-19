@@ -1,146 +1,104 @@
-# RealSense Test
+# AudioVision Prototype
 
-Small Python project for:
-- Intel RealSense D435i depth/color capture with IMU support
-- simple spatial audio tone generation and demo playback
-- early assistive-navigation pipeline with IMU-guided ground subtraction, percentile-depth grid statistics, and TTC-driven audio cues
+Wearable synthetic audio-vision prototype for assistive navigation.
 
-## Files
+This repository contains a real-time pipeline that senses the environment with depth + IMU data and converts spatial risk into directional audio cues.
 
-- `src/realsense_driver.py`: reusable `D435iDriver` class for depth/color/IMU capture
-- `demo_realsense_preview.py`: OpenCV preview demo for color, depth, and IMU telemetry
-- `src/audio_spatial_tone.py`: continuously playing tone class with live pitch, volume, and azimuth control
-- `src/audio_mixer.py`: shared audio output mixer for multiple simultaneous tones
-- `demo_audio_rotating_tones.py`: rotating stereo tone demo
-- `src/navigation_processing.py`: depth+IMU obstacle analysis, configurable percentile-depth grid statistics, and TTC estimation
-- `src/navigation_audio.py`: column-based pulsed audio controller for navigation cues
-- `demo_navigation_assist.py`: end-to-end depth/IMU/audio debug demo with OpenCV overlay
+## Project Snapshot
+
+This project tackles the navigation information gap left by cane-range sensing and limited auditory bandwidth in crowded real-world environments. The vision is a low-profile wearable "audio vision" system that delivers an intuitive, trainable spatial cue stream. The prototype goal is to provide real-time, direction-aware obstacle awareness and early hazard signaling (distance + TTC + ground context) using depth/IMU sensing and spatial audio.
+
+## Current Scope in This Repo
+
+Implemented now:
+1. Intel RealSense D435i depth/color/IMU capture.
+2. Ground-plane estimation with IMU guidance.
+3. Grid-based obstacle analysis with percentile depth and TTC metrics.
+4. Spatial multi-voice audio cue generation.
+5. Interactive demos for preview, audio behavior, and end-to-end navigation.
+
+Future-oriented ideas (not fully implemented here):
+1. Multi-camera fusion.
+2. Richer environmental affordance layers (crossings, signage, tripping hazards).
+
+## Project Layout
+
+- src/realsense_driver.py: RealSense capture driver and frame bundle API.
+- src/navigation_processing.py: obstacle/ground analysis and risk scoring.
+- src/navigation_audio.py: column-level audio controller.
+- src/audio_spatial_tone.py: controllable spatial tone voice.
+- src/audio_mixer.py: shared real-time mixer for multiple voices.
+- demo_realsense_preview.py: camera and IMU OpenCV preview.
+- demo_audio_rotating_tones.py: rotating stereo tone demonstration.
+- demo_navigation_assist.py: end-to-end navigation demo with optional preview.
 
 ## Requirements
 
-- Windows with Python 3.10 or 3.11 recommended
-- Intel RealSense D435i connected over USB 3 if you want camera access
-- The default driver configuration expects a D435i with working IMU streams
-- Speakers or headphones for the audio demo
-
-Python packages are listed in `requirements.txt`.
+1. Windows with Python 3.10 or 3.11.
+2. Intel RealSense D435i for camera workflows.
+3. Speakers or headphones for audio demos.
+4. Python dependencies from requirements.txt.
 
 ## Setup
-
-### 1. Create a virtual environment
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-```
-
-### 2. Install dependencies
-
-```powershell
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-## Notes About `pyrealsense2`
+If installing pyrealsense2 fails, install Intel RealSense runtime/SDK first, then retry.
 
-`pyrealsense2` depends on Intel RealSense support on the target machine. If `pip install -r requirements.txt` fails for `pyrealsense2`, install the Intel RealSense SDK / runtime for your system first, then retry the pip install.
+## Run Demos
 
-Typical things that matter for successful camera startup:
-- use a direct USB 3 port rather than a low-bandwidth hub
-- use a D435i if you expect IMU data
-- if IMU is enabled and cannot be started, driver startup fails immediately
-
-## Run
-
-### RealSense preview
+RealSense preview:
 
 ```powershell
 python .\demo_realsense_preview.py
 ```
 
-This opens a preview window with color and depth. Press `q` or `Esc` to exit.
-
-### Audio demo
+Audio rotating tones:
 
 ```powershell
 python .\demo_audio_rotating_tones.py
 ```
 
-This starts two rotating tones. Press `Ctrl+C` to stop.
-
-### Assistive navigation demo
+Navigation assist:
 
 ```powershell
 python .\demo_navigation_assist.py
 ```
 
-This starts the first end-to-end navigation prototype. It uses depth + IMU data to estimate a ground plane, segments remaining obstacles into a 3x5 grid, computes configurable percentile depth (currently 5th percentile) and TTC per sector, and drives a five-column spatial audio soundscape. Press `q` or `Esc` to exit the preview window.
-
-Use `--no-preview` if you want audio without the OpenCV debug window.
-
-### Runtime modes
-
-The navigation demo supports three runtime modes:
-
-- `desktop_debug` (default): full preview + highest fidelity settings
-- `pi_normal`: Raspberry Pi low-latency mode (preview off by default)
-- `pi_debug`: Raspberry Pi debug mode (preview on, throttled refresh)
-
-Examples:
+Navigation runtime modes:
 
 ```powershell
-# Desktop development/debug
 python .\demo_navigation_assist.py --mode desktop_debug
-
-# Raspberry Pi normal use (lowest latency, no preview)
 python .\demo_navigation_assist.py --mode pi_normal
-
-# Raspberry Pi debug mode with preview throttled to 8 FPS
 python .\demo_navigation_assist.py --mode pi_debug --preview-fps 8
 ```
 
-Overrides:
+Useful flags:
+1. --preview
+2. --no-preview
+3. --no-audio
 
-- `--preview` forces preview on regardless of mode defaults
-- `--no-preview` forces preview off regardless of mode defaults
-- `--no-audio` disables spatial audio output
+## Audio Encoding (Current)
 
-## Import Examples
+At the prototype stage, cues are intentionally simple and consistent:
+1. Azimuth maps to stereo position (left/right direction).
+2. Risk and proximity drive pitch and loudness.
+3. TTC urgency increases pulse rate.
+4. Column-based scene partitioning keeps cue density manageable.
 
-### Use the RealSense driver in your own code
+## Minimal Import Examples
 
 ```python
 from src.realsense_driver import D435iDriver
-
-with D435iDriver() as driver:
-    bundle = driver.wait_for_bundle(timeout_s=2.0)
-    if bundle is not None:
-        print(bundle.color.image.shape)
-        print(bundle.depth.image.shape)
-        print(driver.imu_enabled_runtime)
-```
-
-Pass `enable_imu=False` if you explicitly want depth/color only on a non-IMU RealSense device.
-
-### Use the spatial audio tone class
-
-```python
 from src.audio_spatial_tone import SpatialTone
-
-tone = SpatialTone(initial_pitch_hz=440.0, initial_volume=0.2, initial_azimuth_deg=0.0)
-tone.start()
-try:
-    tone.set_pitch(660.0)
-    tone.set_azimuth(-45.0)
-finally:
-    tone.stop()
 ```
 
-## Sharing This Branch
+## Safety and Research Note
 
-For another user to run this branch on their own machine, they need:
-- this repository contents
-- Python installed
-- `pip install -r requirements.txt`
-- a RealSense D435i and drivers/runtime if they want camera features
-- an audio output device if they want the tone demo
+This is a research prototype, not a certified medical device.
+Use controlled testing practices before any real-world mobility deployment.
