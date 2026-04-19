@@ -39,8 +39,10 @@ class AudioMixer:
         self._registry_lock = threading.RLock()
         self._stream: Optional["sd.OutputStream"] = None
         self._voices: set[AudioVoice] = set()
+        self._voices_snapshot: tuple[AudioVoice, ...] = ()
         self._sample_rate = 48_000
         self._block_size = 512
+        self._mix_buffer = np.zeros((self._block_size, 2), dtype=np.float32)
 
     def register(self, voice: AudioVoice) -> None:
         if sd is None:
@@ -63,12 +65,14 @@ class AudioMixer:
 
             already_present = voice in self._voices
             self._voices.add(voice)
+            self._voices_snapshot = tuple(self._voices)
             if not already_present and self._stream is None:
                 self._start_stream_locked()
 
     def unregister(self, voice: AudioVoice) -> None:
         with self._registry_lock:
             self._voices.discard(voice)
+            self._voices_snapshot = tuple(self._voices)
             if not self._voices:
                 self._stop_stream_locked()
 
@@ -95,14 +99,17 @@ class AudioMixer:
             stream.close()
 
     def _audio_callback(self, outdata, frames, _time_info, _status) -> None:
-        with self._registry_lock:
-            voices = list(self._voices)
+        voices = self._voices_snapshot
 
         if not voices:
             outdata.fill(0)
             return
 
-        mixed = np.zeros((frames, 2), dtype=np.float32)
+        if self._mix_buffer.shape[0] < frames:
+            self._mix_buffer = np.zeros((frames, 2), dtype=np.float32)
+
+        mixed = self._mix_buffer[:frames]
+        mixed.fill(0.0)
         for voice in voices:
             mixed += voice._render_stereo_block(frames)
 

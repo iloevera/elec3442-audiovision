@@ -78,6 +78,33 @@ This starts the first end-to-end navigation prototype. It uses depth + IMU data 
 
 Use `--no-preview` if you want audio without the OpenCV debug window.
 
+### Runtime modes
+
+The navigation demo supports three runtime modes:
+
+- `desktop_debug` (default): full preview + highest fidelity settings
+- `pi_normal`: Raspberry Pi low-latency mode (preview off by default)
+- `pi_debug`: Raspberry Pi debug mode (preview on, throttled refresh)
+
+Examples:
+
+```powershell
+# Desktop development/debug
+python .\demo_navigation_assist.py --mode desktop_debug
+
+# Raspberry Pi normal use (lowest latency, no preview)
+python .\demo_navigation_assist.py --mode pi_normal
+
+# Raspberry Pi debug mode with preview throttled to 8 FPS
+python .\demo_navigation_assist.py --mode pi_debug --preview-fps 8
+```
+
+Overrides:
+
+- `--preview` forces preview on regardless of mode defaults
+- `--no-preview` forces preview off regardless of mode defaults
+- `--no-audio` disables spatial audio output
+
 ## Import Examples
 
 ### Use the RealSense driver in your own code

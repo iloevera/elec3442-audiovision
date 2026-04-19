@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import argparse
 from contextlib import suppress
+from dataclasses import dataclass
 import time
 from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
 
-from navigation_processing import NavigationFrameAnalysis, NavigationProcessor
+from navigation_processing import NavigationFrameAnalysis, NavigationProcessor, NavigationProcessorConfig
 from realsense_driver import D435iDriver
 
 if TYPE_CHECKING:
@@ -19,27 +20,124 @@ WINDOW_NAME = "Assistive Navigation Debug"
 WINDOW_SIZE = (1520, 980)
 
 
+@dataclass(frozen=True)
+class RuntimeModeSettings:
+    depth_size: tuple[int, int]
+    color_size: tuple[int, int]
+    depth_fps: int
+    color_fps: int
+    align_depth_to_color: bool
+    processor_config: NavigationProcessorConfig
+    preview_default: bool
+    window_size: tuple[int, int]
+
+
+def resolve_mode_settings(mode: str) -> RuntimeModeSettings:
+    if mode == "pi_normal":
+        return RuntimeModeSettings(
+            depth_size=(424, 240),
+            color_size=(424, 240),
+            depth_fps=30,
+            color_fps=30,
+            align_depth_to_color=False,
+            processor_config=NavigationProcessorConfig(
+                downsample_step=3,
+                ransac_iterations=30,
+                min_plane_inliers=180,
+                ground_plane_refit_interval_frames=3,
+            ),
+            preview_default=False,
+            window_size=(960, 600),
+        )
+
+    if mode == "pi_debug":
+        return RuntimeModeSettings(
+            depth_size=(424, 240),
+            color_size=(424, 240),
+            depth_fps=30,
+            color_fps=30,
+            align_depth_to_color=False,
+            processor_config=NavigationProcessorConfig(
+                downsample_step=3,
+                ransac_iterations=35,
+                min_plane_inliers=200,
+                ground_plane_refit_interval_frames=2,
+            ),
+            preview_default=True,
+            window_size=(1100, 700),
+        )
+
+    return RuntimeModeSettings(
+        depth_size=(640, 480),
+        color_size=(640, 480),
+        depth_fps=60,
+        color_fps=60,
+        align_depth_to_color=True,
+        processor_config=NavigationProcessorConfig(),
+        preview_default=True,
+        window_size=WINDOW_SIZE,
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Depth+IMU assistive navigation demo")
+    parser.add_argument(
+        "--mode",
+        choices=("desktop_debug", "pi_normal", "pi_debug"),
+        default="desktop_debug",
+        help="Runtime profile for latency/quality trade-offs",
+    )
+    parser.add_argument(
+        "--profile",
+        choices=("desktop_debug", "pi_normal", "pi_debug"),
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument("--preview", action="store_true", help="Force-enable preview window")
     parser.add_argument("--no-preview", action="store_true", help="Disable the OpenCV debug window")
+    parser.add_argument(
+        "--preview-fps",
+        type=float,
+        default=10.0,
+        help="Preview refresh rate target (Pi debug mode uses this to throttle rendering)",
+    )
     parser.add_argument("--no-audio", action="store_true", help="Disable spatial audio output")
     return parser.parse_args()
 
 
 def run_demo() -> None:
     args = parse_args()
-    preview_enabled = not args.no_preview
+    mode = args.profile or args.mode
+    settings = resolve_mode_settings(mode)
+
+    preview_enabled = settings.preview_default
+    if args.preview:
+        preview_enabled = True
+    if args.no_preview:
+        preview_enabled = False
+
     audio_enabled = not args.no_audio
+    preview_stride = 1
+    if preview_enabled and mode == "pi_debug":
+        camera_fps = float(settings.color_fps)
+        target_preview_fps = max(1.0, float(args.preview_fps))
+        preview_stride = max(1, int(round(camera_fps / target_preview_fps)))
 
     if preview_enabled:
         cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(WINDOW_NAME, *WINDOW_SIZE)
+        cv2.resizeWindow(WINDOW_NAME, *settings.window_size)
 
-    processor = NavigationProcessor()
+    processor = NavigationProcessor(config=settings.processor_config)
     audio: NavigationAudioController | None = None
+    frame_index = 0
 
     try:
-        with D435iDriver() as driver:
+        with D435iDriver(
+            depth_size=settings.depth_size,
+            color_size=settings.color_size,
+            depth_fps=settings.depth_fps,
+            color_fps=settings.color_fps,
+            align_depth_to_color=settings.align_depth_to_color,
+        ) as driver:
             while True:
                 bundle = driver.wait_for_bundle(timeout_s=1.0)
                 if bundle is None:
@@ -59,11 +157,13 @@ def run_demo() -> None:
                     audio.apply(analysis.column_states, now_s=time.monotonic())
 
                 if preview_enabled:
-                    frame = compose_debug_frame(bundle.color.image, bundle.depth.image, analysis)
-                    cv2.imshow(WINDOW_NAME, frame)
+                    if frame_index % preview_stride == 0:
+                        frame = compose_debug_frame(bundle.color.image, bundle.depth.image, analysis)
+                        cv2.imshow(WINDOW_NAME, frame)
                     key = cv2.waitKey(1) & 0xFF
                     if key in (27, ord("q")):
                         break
+                frame_index += 1
     finally:
         if audio is not None:
             audio.stop()

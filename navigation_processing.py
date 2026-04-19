@@ -73,12 +73,19 @@ class NavigationProcessorConfig:
     gravity_alignment_cos_min: float = 0.90
     max_plane_tilt_deg: float = 35.0
     min_plane_inliers: int = 300
+    ground_plane_refit_interval_frames: int = 1
     floor_clearance_m: float = 0.04
     dropoff_clearance_m: float = 0.08
     min_obstacle_points_per_cell: int = 6
     depth_percentile: float = 5.0
     occupancy_denominator: int = 80
     ttc_min_speed_mps: float = 0.05
+    ttc_min_depth_delta_m: float = 0.03
+    ttc_min_dt_s: float = 0.01
+    ttc_approach_ema_alpha: float = 0.40
+    ttc_confirm_frames: int = 3
+    ttc_clear_frames: int = 2
+    ttc_max_speed_mps: float = 4.0
     ttc_horizon_s: float = 3.0
     proximity_near_m: float = 0.35
     proximity_far_m: float = 3.0
@@ -101,6 +108,18 @@ class NavigationProcessorConfig:
             raise ValueError("rows and cols must be positive")
         if not 0.0 <= self.depth_percentile <= 100.0:
             raise ValueError("depth_percentile must be in range [0, 100]")
+        if self.ttc_min_depth_delta_m < 0.0:
+            raise ValueError("ttc_min_depth_delta_m must be non-negative")
+        if self.ttc_min_dt_s <= 0.0:
+            raise ValueError("ttc_min_dt_s must be > 0")
+        if not 0.0 <= self.ttc_approach_ema_alpha <= 1.0:
+            raise ValueError("ttc_approach_ema_alpha must be in range [0, 1]")
+        if self.ttc_confirm_frames <= 0:
+            raise ValueError("ttc_confirm_frames must be positive")
+        if self.ttc_clear_frames <= 0:
+            raise ValueError("ttc_clear_frames must be positive")
+        if self.ttc_max_speed_mps <= 0.0:
+            raise ValueError("ttc_max_speed_mps must be > 0")
         if len(self.column_row_weights) != self.rows:
             weights = [1.0] * self.rows
             object.__setattr__(self, "column_row_weights", tuple(weights))
@@ -110,6 +129,9 @@ class NavigationProcessorConfig:
 class _CellHistory:
     depth_m: Optional[float] = None
     timestamp_s: Optional[float] = None
+    approach_speed_ema_mps: float = 0.0
+    approach_confirm_streak: int = 0
+    non_approach_streak: int = 0
 
 
 class NavigationProcessor:
@@ -120,6 +142,8 @@ class NavigationProcessor:
             for row in range(self.config.rows)
             for col in range(self.config.cols)
         }
+        self._frame_index = 0
+        self._cached_ground_plane: Optional[GroundPlaneEstimate] = None
 
     def process_bundle(self, bundle: FrameBundle) -> NavigationFrameAnalysis:
         depth_m = bundle.depth.image.astype(np.float32) * float(bundle.depth.depth_scale)
@@ -128,14 +152,17 @@ class NavigationProcessor:
         valid_mask &= depth_m <= self.config.max_depth_m
 
         gravity_unit = self._estimate_gravity_unit(bundle)
-        points, sampled_mask = self._depth_to_points(
+        full_points, _ = self._depth_to_points(
             depth_m=depth_m,
             intrinsics=bundle.depth.intrinsics,
-            downsample_step=self.config.downsample_step,
+            downsample_step=1,
         )
+        sampled_mask = np.zeros_like(valid_mask, dtype=bool)
+        step = max(1, int(self.config.downsample_step))
+        sampled_mask[::step, ::step] = True
 
-        plane = self._estimate_ground_plane(
-            points=points,
+        plane = self._select_ground_plane(
+            points=full_points,
             sampled_mask=sampled_mask,
             valid_mask=valid_mask,
             gravity_unit=gravity_unit,
@@ -146,11 +173,6 @@ class NavigationProcessor:
         height_above_ground_m: Optional[np.ndarray] = None
 
         if plane is not None:
-            full_points, _ = self._depth_to_points(
-                depth_m=depth_m,
-                intrinsics=bundle.depth.intrinsics,
-                downsample_step=1,
-            )
             signed_distance = self._plane_signed_distance(full_points, plane.normal, plane.offset)
             height_above_ground_m = signed_distance.astype(np.float32)
             ground_mask = valid_mask & (np.abs(height_above_ground_m) <= self.config.floor_clearance_m)
@@ -211,6 +233,7 @@ class NavigationProcessor:
                 )
 
         column_states = self._build_column_states(cell_states=cell_states)
+        self._frame_index += 1
         return NavigationFrameAnalysis(
             timestamp_s=timestamp_s,
             depth_m=depth_m,
@@ -227,6 +250,25 @@ class NavigationProcessor:
             ttc_grid_s=ttc_grid,
             risk_grid=risk_grid,
         )
+
+    def _select_ground_plane(
+        self,
+        *,
+        points: np.ndarray,
+        sampled_mask: np.ndarray,
+        valid_mask: np.ndarray,
+        gravity_unit: Optional[np.ndarray],
+    ) -> Optional[GroundPlaneEstimate]:
+        interval = max(1, int(self.config.ground_plane_refit_interval_frames))
+        should_refit = self._cached_ground_plane is None or (self._frame_index % interval == 0)
+        if should_refit:
+            self._cached_ground_plane = self._estimate_ground_plane(
+                points=points,
+                sampled_mask=sampled_mask,
+                valid_mask=valid_mask,
+                gravity_unit=gravity_unit,
+            )
+        return self._cached_ground_plane
 
     def _estimate_gravity_unit(self, bundle: FrameBundle) -> Optional[np.ndarray]:
         accel = bundle.latest_accel
@@ -347,7 +389,15 @@ class NavigationProcessor:
     def _depth_percentile(self, depth_values_m: np.ndarray) -> Optional[float]:
         if depth_values_m.size == 0:
             return None
-        return float(np.percentile(depth_values_m, self.config.depth_percentile))
+        percentile = float(np.clip(self.config.depth_percentile, 0.0, 100.0))
+        if percentile <= 0.0:
+            return float(np.min(depth_values_m))
+        if percentile >= 100.0:
+            return float(np.max(depth_values_m))
+
+        index = int((percentile / 100.0) * (depth_values_m.size - 1))
+        partitioned = np.partition(depth_values_m, index)
+        return float(partitioned[index])
 
     def _update_ttc(
         self,
@@ -364,6 +414,9 @@ class NavigationProcessor:
         if percentile_depth_m is None:
             history.depth_m = None
             history.timestamp_s = timestamp_s
+            history.approach_speed_ema_mps = 0.0
+            history.approach_confirm_streak = 0
+            history.non_approach_streak = 0
             return approach_speed_mps, ttc_s
 
         if (
@@ -372,9 +425,32 @@ class NavigationProcessor:
             and timestamp_s > history.timestamp_s
         ):
             dt = timestamp_s - history.timestamp_s
-            approach_speed_mps = max(0.0, (history.depth_m - percentile_depth_m) / dt)
-            if approach_speed_mps >= self.config.ttc_min_speed_mps:
-                ttc_s = percentile_depth_m / approach_speed_mps
+            if dt >= self.config.ttc_min_dt_s:
+                depth_delta_m = history.depth_m - percentile_depth_m
+                if depth_delta_m >= self.config.ttc_min_depth_delta_m:
+                    instant_speed_mps = depth_delta_m / dt
+                    instant_speed_mps = float(
+                        np.clip(instant_speed_mps, 0.0, self.config.ttc_max_speed_mps)
+                    )
+                    alpha = float(np.clip(self.config.ttc_approach_ema_alpha, 0.0, 1.0))
+                    history.approach_speed_ema_mps = (
+                        (1.0 - alpha) * history.approach_speed_ema_mps
+                        + alpha * instant_speed_mps
+                    )
+                    history.approach_confirm_streak += 1
+                    history.non_approach_streak = 0
+                else:
+                    history.approach_confirm_streak = 0
+                    history.non_approach_streak += 1
+                    if history.non_approach_streak >= self.config.ttc_clear_frames:
+                        history.approach_speed_ema_mps = 0.0
+
+                approach_speed_mps = history.approach_speed_ema_mps
+                if (
+                    history.approach_confirm_streak >= self.config.ttc_confirm_frames
+                    and approach_speed_mps >= self.config.ttc_min_speed_mps
+                ):
+                    ttc_s = percentile_depth_m / approach_speed_mps
 
         history.depth_m = percentile_depth_m
         history.timestamp_s = timestamp_s
