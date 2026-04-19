@@ -48,7 +48,13 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-If installing pyrealsense2 fails, install Intel RealSense runtime/SDK first, then retry.
+Important Raspberry Pi note: `pyrealsense2` is not available from `pip` on Raspberry Pi in the way it is on desktop platforms. On Pi, build `librealsense` and the Python bindings from source instead of relying on `pip install`. Follow the upstream Intel RealSense Raspberry Pi guide:
+
+https://github.com/realsenseai/librealsense/blob/master/doc/installation_raspbian.md
+
+In practice, that means installing the system build dependencies, building and installing `librealsense`, then rebuilding with `-DBUILD_PYTHON_BINDINGS=bool:true` and running `sudo make install` so `pyrealsense2` is installed into `/usr/local`.
+
+If installing `pyrealsense2` fails on desktop, install the Intel RealSense runtime/SDK first, then retry.
 
 ## Run Demos
 
