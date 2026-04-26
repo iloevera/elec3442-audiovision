@@ -23,6 +23,9 @@ class SpatialTone:
         initial_pitch_hz: float = 440.0,
         initial_volume: float = 0.2,
         initial_azimuth_deg: float = 0.0,
+        initial_brightness: float = 0.2,
+        initial_roughness_depth: float = 0.0,
+        initial_roughness_hz: float = 6.0,
         sample_rate: int = 48_000,
         block_size: int = 512,
     ) -> None:
@@ -36,9 +39,13 @@ class SpatialTone:
         self._pitch_hz = self._clamp_pitch(initial_pitch_hz)
         self._volume = self._clamp_volume(initial_volume)
         self._azimuth_deg = self._normalize_azimuth(initial_azimuth_deg)
+        self._brightness = self._clamp_unit(initial_brightness)
+        self._roughness_depth = self._clamp_unit(initial_roughness_depth)
+        self._roughness_hz = max(0.0, float(initial_roughness_hz))
         self._left_gain, self._right_gain = self._azimuth_to_equal_power_gains(self._azimuth_deg)
         self._sample_idx = np.arange(self.block_size, dtype=np.float64)
         self._silence_block = np.zeros((self.block_size, 2), dtype=np.float32)
+        self._roughness_phase = 0.0
 
     @property
     def pitch_hz(self) -> float:
@@ -97,6 +104,9 @@ class SpatialTone:
         pitch_hz: Optional[float] = None,
         volume: Optional[float] = None,
         azimuth_deg: Optional[float] = None,
+        brightness: Optional[float] = None,
+        roughness_depth: Optional[float] = None,
+        roughness_hz: Optional[float] = None,
     ) -> None:
         """Atomically update any subset of parameters."""
         with self._lock:
@@ -107,6 +117,12 @@ class SpatialTone:
             if azimuth_deg is not None:
                 self._azimuth_deg = self._normalize_azimuth(azimuth_deg)
                 self._left_gain, self._right_gain = self._azimuth_to_equal_power_gains(self._azimuth_deg)
+            if brightness is not None:
+                self._brightness = self._clamp_unit(brightness)
+            if roughness_depth is not None:
+                self._roughness_depth = self._clamp_unit(roughness_depth)
+            if roughness_hz is not None:
+                self._roughness_hz = max(0.0, float(roughness_hz))
 
     def _render_stereo_block(self, frames: int) -> np.ndarray:
         with self._lock:
@@ -115,10 +131,16 @@ class SpatialTone:
             volume = self._volume
             left_gain = self._left_gain
             right_gain = self._right_gain
+            brightness = self._brightness
+            roughness_depth = self._roughness_depth
+            roughness_hz = self._roughness_hz
             phase_start = self._phase
+            roughness_phase_start = self._roughness_phase
 
             phase_inc = (2.0 * math.pi * pitch_hz) / float(self.sample_rate)
+            roughness_inc = (2.0 * math.pi * roughness_hz) / float(self.sample_rate)
             self._phase = (self._phase + frames * phase_inc) % (2.0 * math.pi)
+            self._roughness_phase = (self._roughness_phase + frames * roughness_inc) % (2.0 * math.pi)
 
         if not active or volume <= 0.0:
             if frames <= self.block_size:
@@ -127,7 +149,15 @@ class SpatialTone:
 
         sample_idx = self._sample_idx[:frames] if frames <= self.block_size else np.arange(frames, dtype=np.float64)
         phases = phase_start + sample_idx * phase_inc
-        mono = np.sin(phases).astype(np.float32)
+        fundamental = np.sin(phases)
+        second_harmonic = np.sin(2.0 * phases)
+        mono = ((1.0 - brightness) * fundamental + brightness * (0.8 * fundamental + 0.2 * second_harmonic)).astype(
+            np.float32
+        )
+        if roughness_depth > 0.0 and roughness_hz > 0.0:
+            roughness_phase = roughness_phase_start + sample_idx * roughness_inc
+            tremolo = 1.0 - roughness_depth + roughness_depth * (0.5 + 0.5 * np.sin(roughness_phase))
+            mono *= tremolo.astype(np.float32)
         stereo = np.empty((frames, 2), dtype=np.float32)
         stereo[:, 0] = mono * np.float32(left_gain * volume)
         stereo[:, 1] = mono * np.float32(right_gain * volume)
@@ -150,6 +180,15 @@ class SpatialTone:
         if vol > 1.0:
             return 1.0
         return vol
+
+    @staticmethod
+    def _clamp_unit(value: float) -> float:
+        scalar = float(value)
+        if scalar < 0.0:
+            return 0.0
+        if scalar > 1.0:
+            return 1.0
+        return scalar
 
     @staticmethod
     def _normalize_azimuth(azimuth_deg: float) -> float:

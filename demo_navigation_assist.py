@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from contextlib import suppress
 from dataclasses import dataclass
+import os
 import time
 from typing import TYPE_CHECKING
 
@@ -11,6 +12,7 @@ import numpy as np
 
 from src.navigation_processing import NavigationFrameAnalysis, NavigationProcessor, NavigationProcessorConfig
 from src.realsense_driver import D435iDriver
+from src.voice_commands import VoskCommandListener
 
 from src.pi_trip_camera import PiTripCamera
 from src.pi_trip_hazard import PiTripHazardDetector
@@ -22,6 +24,7 @@ if TYPE_CHECKING:
 
 WINDOW_NAME = "Assistive Navigation Debug"
 WINDOW_SIZE = (1520, 980)
+VOICE_PRESET_COMMANDS = ("original", "smooth", "alert")
 
 
 @dataclass(frozen=True)
@@ -105,6 +108,24 @@ def parse_args() -> argparse.Namespace:
         help="Preview refresh rate target (Pi debug mode uses this to throttle rendering)",
     )
     parser.add_argument("--no-audio", action="store_true", help="Disable spatial audio output")
+    parser.add_argument("--voice-commands", action="store_true", help="Enable Vosk keyword commands")
+    parser.add_argument(
+        "--vosk-model-path",
+        default=os.environ.get("VOSK_MODEL_PATH", ""),
+        help="Path to a Vosk speech model directory",
+    )
+    parser.add_argument(
+        "--voice-input-device",
+        type=int,
+        default=None,
+        help="Optional input device index for microphone capture",
+    )
+    parser.add_argument(
+        "--texture-preset",
+        choices=VOICE_PRESET_COMMANDS,
+        default="original",
+        help="Initial audio texture preset",
+    )
     return parser.parse_args()
 
 
@@ -132,6 +153,7 @@ def run_demo() -> None:
 
     processor = NavigationProcessor(config=settings.processor_config)
     audio: NavigationAudioController | None = None
+    voice_listener: VoskCommandListener | None = None
     frame_index = 0
     
     pi_audio: NavigationAudioController | None = None
@@ -158,10 +180,24 @@ def run_demo() -> None:
                     from src.navigation_audio import NavigationAudioController, NavigationAudioConfig
 
                     audio = NavigationAudioController(column_count=processor.config.cols, config= NavigationAudioConfig(use_pulse_gating=False),)
+                    audio.set_texture_preset(args.texture_preset)
                     audio.start()
 
                     pi_audio = NavigationAudioController(column_count=processor.config.cols, config= NavigationAudioConfig(use_pulse_gating=True),)
+                    pi_audio.set_texture_preset(args.texture_preset)
                     pi_audio.start()
+
+                    if args.voice_commands:
+                        model_path = args.vosk_model_path.strip()
+                        if not model_path:
+                            raise ValueError("--voice-commands requires --vosk-model-path (or VOSK_MODEL_PATH)")
+                        voice_listener = VoskCommandListener(
+                            model_path=model_path,
+                            commands=VOICE_PRESET_COMMANDS,
+                            input_device=args.voice_input_device,
+                        )
+                        voice_listener.start()
+                        print(f"Voice commands enabled ({', '.join(VOICE_PRESET_COMMANDS)})")
 
                 analysis = processor.process_bundle(bundle)
 
@@ -178,8 +214,17 @@ def run_demo() -> None:
                 if pi_audio is not None:
                     pi_audio.apply(trip_states, now_s=time.monotonic())
 
+                if voice_listener is not None and audio is not None:
+                    command = voice_listener.poll_command()
+                    if command is not None:
+                        selected = audio.set_texture_preset(command)
+                        if pi_audio is not None:
+                            pi_audio.set_texture_preset(command)
+                        print(f"Voice preset -> {selected} (RealSense continuous, Pi pulsed)")
+
                 if audio is not None:
                     audio.apply(analysis.column_states, now_s=time.monotonic())
+
                 if preview_enabled:
                     if frame_index % preview_stride == 0:
                         frame = compose_debug_frame(bundle.color.image, bundle.depth.image, analysis)
@@ -189,6 +234,8 @@ def run_demo() -> None:
                         break
                 frame_index += 1
     finally:
+        if voice_listener is not None:
+            voice_listener.stop()
         if audio is not None:
             audio.stop()
         if pi_audio is not None:

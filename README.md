@@ -89,6 +89,21 @@ Useful flags:
 2. --no-preview
 3. --no-audio
 
+Voice texture preset control:
+1. Install Vosk model files and note the model directory path.
+2. Start navigation with voice commands enabled:
+
+```powershell
+python .\demo_navigation_assist.py --voice-commands --vosk-model-path C:\path\to\vosk-model-en-us --texture-preset original
+```
+
+Supported voice keywords:
+1. original
+2. smooth
+3. alert
+
+When a keyword is recognized, the active navigation audio preset switches live.
+
 ## Audio Encoding (Current)
 
 At the prototype stage, cues are intentionally simple and consistent:
