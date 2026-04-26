@@ -12,6 +12,10 @@ import numpy as np
 from src.navigation_processing import NavigationFrameAnalysis, NavigationProcessor, NavigationProcessorConfig
 from src.realsense_driver import D435iDriver
 
+from src.pi_trip_camera import PiTripCamera
+from src.pi_trip_hazard import PiTripHazardDetector
+from src.pi_trip_hazard_states import build_trip_column_states
+
 if TYPE_CHECKING:
     from src.navigation_audio import NavigationAudioController
 
@@ -129,6 +133,10 @@ def run_demo() -> None:
     processor = NavigationProcessor(config=settings.processor_config)
     audio: NavigationAudioController | None = None
     frame_index = 0
+    
+    pi_audio: NavigationAudioController | None = None
+    trip_camera = PiTripCamera(camera_index=0)
+    trip_detector = PiTripHazardDetector(column_count=processor.config.cols)
 
     try:
         with D435iDriver(
@@ -147,15 +155,31 @@ def run_demo() -> None:
 
                 if audio_enabled and audio is None:
                     # Delay audio import/startup until after first camera bundle arrives.
-                    from src.navigation_audio import NavigationAudioController
+                    from src.navigation_audio import NavigationAudioController, NavigationAudioConfig
 
-                    audio = NavigationAudioController(column_count=processor.config.cols)
+                    audio = NavigationAudioController(column_count=processor.config.cols, config= NavigationAudioConfig(use_pulse_gating=False),)
                     audio.start()
 
+                    pi_audio = NavigationAudioController(column_count=processor.config.cols, config= NavigationAudioConfig(use_pulse_gating=True),)
+                    pi_audio.start()
+
                 analysis = processor.process_bundle(bundle)
+
+                trip_frame = trip_camera.read()
+                trip_detections = ()
+                if trip_frame is not None:
+                    trip_detections = trip_detector.detect(trip_frame.image)
+
+                trip_states = build_trip_column_states(
+                    trip_detections=trip_detections,
+                    cols=processor.config.cols,
+                )
+    
+                if pi_audio is not None:
+                    pi_audio.apply(trip_states, now_s=time.monotonic())
+
                 if audio is not None:
                     audio.apply(analysis.column_states, now_s=time.monotonic())
-
                 if preview_enabled:
                     if frame_index % preview_stride == 0:
                         frame = compose_debug_frame(bundle.color.image, bundle.depth.image, analysis)
@@ -167,6 +191,8 @@ def run_demo() -> None:
     finally:
         if audio is not None:
             audio.stop()
+        if pi_audio is not None:
+            pi_audio.stop()
         if preview_enabled:
             with suppress(Exception):
                 cv2.destroyWindow(WINDOW_NAME)
