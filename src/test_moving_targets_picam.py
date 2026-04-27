@@ -1,41 +1,55 @@
-#!/usr/bin/env python3
-"""
-Moving Targets Test - Lowered Thresholds + Stronger Closeness Focus
-(Closeness > 0.5 now heavily influences approaching alerts)
-"""
-
 import cv2
 import numpy as np
 import time
 import torch
 import os
+from picamera2 import Picamera2
 
 # ====================== CONFIG ======================
-MODEL_PATH = "midas_v21_small_256.pt"
+# Choose your model here:
+MODEL_CONFIG = {
+    "name": "dpt_swin2_tiny_256",           # change to "dpt_levit_224" if you want the fastest
+    "hub_entry": "DPT_SwinV2_T_256",
+    "transform": "swin256_transform",
+    "file": "dpt_swin2_tiny_256.pt"
+}
 
-if not os.path.exists(MODEL_PATH):
-    print(f"ERROR: Model '{MODEL_PATH}' not found!")
+# For LeViT instead, use this:
+# MODEL_CONFIG = {
+#     "name": "dpt_levit_224",
+#     "hub_entry": "DPT_LeViT_224",
+#     "transform": "levit_transform",
+#     "file": "dpt_levit_224.pt"
+# }
+
+PREVIEW_SIZE = (640, 480)        # reduce to (480, 360) if still slow
+
+if not os.path.exists(MODEL_CONFIG["file"]):
+    print(f"ERROR: Model file '{MODEL_CONFIG['file']}' not found!")
+    print(f"Download it from: https://github.com/isl-org/MiDaS/releases/download/v3_1/{MODEL_CONFIG['file']}")
     exit(1)
 
-print("Loading MiDaS model...")
-midas = torch.hub.load("isl-org/MiDaS", "MiDaS_small", pretrained=False)
-state_dict = torch.load(MODEL_PATH, map_location=torch.device('cpu'), weights_only=True)
+print(f"Loading {MODEL_CONFIG['name']} model...")
+
+midas = torch.hub.load("isl-org/MiDaS", MODEL_CONFIG["hub_entry"], pretrained=False)
+state_dict = torch.load(MODEL_CONFIG["file"], map_location=torch.device('cpu'), weights_only=True)
 midas.load_state_dict(state_dict)
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cpu")
 midas.to(device)
 midas.eval()
 
 midas_transforms = torch.hub.load("isl-org/MiDaS", "transforms")
-transform = midas_transforms.small_transform
+transform = getattr(midas_transforms, MODEL_CONFIG["transform"])   # this line handles the difference
 
-print(f"✅ Model loaded on {device}")
+print(f"{MODEL_CONFIG['name']} loaded successfully on {device}")
+
 
 prev_gray = None
 flow_params = dict(pyr_scale=0.5, levels=3, winsize=15, iterations=3, poly_n=5, poly_sigma=1.2, flags=0)
 
 alert_history = []
-HISTORY_LENGTH = 10   # longer persistence
+HISTORY_LENGTH = 8
 
 def estimate_depth(rgb_image):
     input_tensor = transform(rgb_image)
@@ -57,6 +71,7 @@ def estimate_depth(rgb_image):
     depth = prediction.cpu().numpy()
     depth = (depth - depth.min()) / (depth.max() - depth.min() + 1e-8)
     return depth
+
 
 def detect_motion_type(current_gray, prev_gray, depth_map):
     if prev_gray is None:
@@ -95,13 +110,13 @@ def detect_motion_type(current_gray, prev_gray, depth_map):
 
 
 def main():
-    cap = cv2.VideoCapture(0)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    picam2 = Picamera2()
+    config = picam2.create_preview_configuration(main={"size": PREVIEW_SIZE, "format": "RGB888"})
+    picam2.configure(config)
+    picam2.start()
+    print(f"Camera started at {PREVIEW_SIZE}")
 
-    print("\n✅ Moving Targets Test - Closeness-Focused Version")
-    print("   • Move camera toward objects (closeness > ~0.45) → orange")
-    print("   • Someone walks quickly toward camera (closeness > 0.55 + motion) → red")
+    print(f"\nMoving Targets Test Running with {MODEL_CONFIG['name']}")
     print("Press 'q' to quit\n")
 
     global prev_gray
@@ -109,9 +124,8 @@ def main():
     frame_count = 0
 
     while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
+        array = picam2.capture_array("main")
+        frame = cv2.cvtColor(array, cv2.COLOR_RGB2BGR)
 
         frame_count += 1
         current_time = time.time()
@@ -124,7 +138,7 @@ def main():
         status, rel_speed, text_color, alert, closeness, flow = detect_motion_type(gray, prev_gray, depth_map)
         prev_gray = gray.copy()
 
-        # Smoothing
+        # Alert smoothing + visualization code (same as your previous version)
         alert_history.append((status, text_color, alert))
         if len(alert_history) > HISTORY_LENGTH:
             alert_history.pop(0)
@@ -134,36 +148,30 @@ def main():
             key=lambda x: 2 if "FAST" in x[0] else 1 if "OBSTACLE" in x[0] else 0
         )
 
-        # Visualization
         depth_vis = (depth_map * 255).astype(np.uint8)
         depth_color = cv2.applyColorMap(depth_vis, cv2.COLORMAP_JET)
         overlay = cv2.addWeighted(frame, 0.6, depth_color, 0.4, 0)
 
-        cv2.putText(overlay, display_status, (30, 65),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.25, display_color, 3)
-
+        cv2.putText(overlay, display_status, (30, 65), cv2.FONT_HERSHEY_SIMPLEX, 1.1, display_color, 3)
         if display_alert:
-            cv2.putText(overlay, display_alert, (30, 110),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, display_color, 2)
-
-        cv2.putText(overlay, f"Closeness: {closeness:.2f} | Flow: {flow:.1f} | Speed: {rel_speed:.1f}", 
-                    (30, 155), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
+            cv2.putText(overlay, display_alert, (30, 105), cv2.FONT_HERSHEY_SIMPLEX, 0.85, display_color, 2)
+        cv2.putText(overlay, f"Closeness: {closeness:.2f} | Speed: {rel_speed:.1f}", 
+                    (30, 145), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
         if current_time - last_time > 1.0:
             fps = frame_count / (current_time - last_time)
-            cv2.putText(overlay, f"FPS: {fps:.1f}", (overlay.shape[1]-180, overlay.shape[0]-30),
+            cv2.putText(overlay, f"FPS: {fps:.1f}", (overlay.shape[1]-160, overlay.shape[0]-30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 0), 2)
             last_time = current_time
             frame_count = 0
 
-        cv2.imshow("Moving Targets Test - Closeness Focused", overlay)
+        cv2.imshow(f"Moving Targets - {MODEL_CONFIG['name']}", overlay)
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
-    cap.release()
+    picam2.stop()
     cv2.destroyAllWindows()
-    print("Test ended.")
 
 if __name__ == "__main__":
     main()
