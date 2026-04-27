@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from ultralytics import YOLO
 import numpy as np
+import cv2
 
 
 @dataclass(frozen=True)
@@ -16,7 +17,7 @@ class TripHazardDetection:
 
 
 class PiTripHazardDetector:
-    def __init__(
+    '''def __init__(
         self,
         model_path: str = "yolo11n.pt",
         column_count: int = 5,
@@ -24,7 +25,14 @@ class PiTripHazardDetector:
     ) -> None:
         self.model = YOLO(model_path)
         self.column_count = column_count
-        self.conf_threshold = conf_threshold
+        self.conf_threshold = conf_threshold'''
+    def __init__(
+        self,
+        column_count: int = 5,
+        min_area: int = 1500,
+    ) -> None:
+        self.column_count = column_count
+        self.min_area = min_area
 
         self.target_labels = {
             "person",
@@ -38,6 +46,7 @@ class PiTripHazardDetector:
             "wire"
         }
 
+    '''
     def detect(self, image: np.ndarray) -> tuple[TripHazardDetection, ...]:
         h, w = image.shape[:2]
         results = self.model.predict(image, verbose=False)
@@ -74,6 +83,57 @@ class PiTripHazardDetector:
             detections.append(
                 TripHazardDetection(
                     label=label,
+                    confidence=confidence,
+                    column=column,
+                    azimuth_deg=azimuth_deg,
+                    bbox_xyxy=(x1, y1, x2, y2),
+                    urgency=urgency,
+                )
+            )
+        
+
+        detections.sort(key=lambda d: d.urgency, reverse=True)
+        return tuple(detections[:3])'''
+    
+    def detect(self, image: np.ndarray) -> tuple[TripHazardDetection, ...]:
+        h, w = image.shape[:2]
+
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        blur = cv2.GaussianBlur(gray, (7, 7), 0)
+
+        edges = cv2.Canny(blur, 50, 150)
+        kernel = np.ones((5, 5), np.uint8)
+        mask = cv2.dilate(edges, kernel, iterations=2)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        detections: list[TripHazardDetection] = []
+
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area < self.min_area:
+                continue
+
+            x, y, bw, bh = cv2.boundingRect(cnt)
+
+            if y + bh < h * 0.45:
+                continue
+
+            x1, y1, x2, y2 = x, y, x + bw, y + bh
+            cx = 0.5 * (x1 + x2)
+
+            column = self._x_to_column(cx, w)
+            azimuth_deg = self._x_to_azimuth(cx, w)
+
+            lower_bias = min(1.0, y2 / max(1, h))
+            size_bias = min(1.0, area / float(w * h * 0.2))
+            confidence = float(np.clip(0.4 + 0.6 * size_bias, 0.0, 1.0))
+            urgency = float(np.clip(0.65 * lower_bias + 0.35 * size_bias, 0.0, 1.0))
+
+            detections.append(
+                TripHazardDetection(
+                    label="obstacle",
                     confidence=confidence,
                     column=column,
                     azimuth_deg=azimuth_deg,
