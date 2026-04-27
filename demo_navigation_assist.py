@@ -16,6 +16,8 @@ from src.pi_trip_camera import PiTripCamera
 from src.pi_trip_hazard import PiTripHazardDetector
 from src.pi_trip_hazard_states import build_trip_column_states
 
+from src.path_guidance_audio import PathGuidanceAudio, PathGuidanceConfig
+
 if TYPE_CHECKING:
     from src.navigation_audio import NavigationAudioController
 
@@ -138,6 +140,8 @@ def run_demo() -> None:
     trip_camera = PiTripCamera(camera_index=0)
     trip_detector = PiTripHazardDetector(column_count=processor.config.cols)
 
+    path_guide = PathGuidanceAudio(config=PathGuidanceConfig())
+    
     try:
         with D435iDriver(
             depth_size=settings.depth_size,
@@ -164,6 +168,7 @@ def run_demo() -> None:
                     pi_audio.start()
 
                 analysis = processor.process_bundle(bundle)
+                path_guide.update(analysis)
 
                 trip_frame = trip_camera.read()
                 trip_detections = ()
@@ -197,6 +202,8 @@ def run_demo() -> None:
             with suppress(Exception):
                 cv2.destroyWindow(WINDOW_NAME)
             cv2.destroyAllWindows()
+        if path_guide is not None:
+            path_guide.stop()
 
 
 def compose_debug_frame(
