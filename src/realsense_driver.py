@@ -90,6 +90,7 @@ class D435iDriver:
         depth_fps: int = 30,
         color_fps: int = 30,
         enable_imu: bool = True,
+        require_imu: bool = False,
         accel_fps: int = 250,
         gyro_fps: int = 200,
         align_depth_to_color: bool = True,
@@ -102,6 +103,7 @@ class D435iDriver:
         self.depth_fps = int(depth_fps)
         self.color_fps = int(color_fps)
         self.enable_imu = bool(enable_imu)
+        self.require_imu = bool(require_imu)
         self.accel_fps = int(accel_fps)
         self.gyro_fps = int(gyro_fps)
         self.align_depth_to_color = bool(align_depth_to_color)
@@ -330,7 +332,18 @@ class D435iDriver:
                 gyro_fps=self.gyro_fps,
             )
 
-        motion_device = self._find_motion_device()
+        try:
+            motion_device = self._find_motion_device()
+        except RuntimeError:
+            if self.require_imu:
+                raise
+            self.enable_imu = False
+            return MotionRuntimeConfig(
+                serial_number=None,
+                device_name=None,
+                accel_fps=self.accel_fps,
+                gyro_fps=self.gyro_fps,
+            )
         return MotionRuntimeConfig(
             serial_number=motion_device.get_info(rs.camera_info.serial_number),
             device_name=motion_device.get_info(rs.camera_info.name),

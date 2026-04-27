@@ -17,7 +17,7 @@ class NavigationAudioConfig:
     near_priority_distance_m: float = 0.50
     ttc_priority_horizon_s: float = 5.0
     max_simultaneous_columns: int | None = 3
-
+    use_pulse_gating: bool = False
 
 class NavigationAudioController:
     def __init__(self, column_count: int, config: NavigationAudioConfig | None = None) -> None:
@@ -79,10 +79,18 @@ class NavigationAudioController:
             voice = self._voices[state.col]
             target_volume = 0.0
             if state.col in active_columns:
-                target_volume = min(
+                base_target = min(
                     1.0,
                     self.config.base_volume * self.config.output_gain * state.volume,
                 )
+                if self.config.use_pulse_gating and state.pulse_hz > 0.0:
+                    phase = (_ * state.pulse_hz) % 1.0
+                    duty_cycle = 0.25
+                    gate = 1.0 if phase < duty_cycle else 0.0
+                    target_volume = base_target * gate
+                else:
+                    target_volume = base_target
+
             voice.set_params(
                 pitch_hz=state.pitch_hz,
                 volume=target_volume,

@@ -4,3 +4,6 @@ __pycache__/
 *.pyo
 *.pyd
 *.log
+*.pt
+.DS_Store
+.vscode/*
