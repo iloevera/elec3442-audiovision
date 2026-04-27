@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import argparse
@@ -15,25 +16,146 @@ from src.realsense_driver import D435iDriver
 from src.pi_trip_camera import PiTripCamera
 from src.pi_trip_hazard import PiTripHazardDetector
 from src.pi_trip_hazard_states import build_trip_column_states
+from src.voice_commands import VoskCommandListener
 
 if TYPE_CHECKING:
     from src.navigation_audio import NavigationAudioController
-
 
 WINDOW_NAME = "Assistive Navigation Debug"
 WINDOW_SIZE = (1520, 980)
 
 
-@dataclass(frozen=True)
-class RuntimeModeSettings:
-    depth_size: tuple[int, int]
-    color_size: tuple[int, int]
-    depth_fps: int
-    color_fps: int
-    align_depth_to_color: bool
-    processor_config: NavigationProcessorConfig
-    preview_default: bool
-    window_size: tuple[int, int]
+
+
+def run_demo() -> None:
+    # --- Feature flags ---
+    object_avoidance_enabled = True
+    trip_hazard_enabled = True
+    path_finding_enabled = True  # Placeholder for future path finding logic
+
+    # --- Voice command setup ---
+    COMMANDS = [
+        "enable object avoidance", "disable object avoidance",
+        "enable tripping hazards", "disable tripping hazards",
+        "enable path finding", "disable path finding"
+    ]
+    vosk_model_path = "/Users/rajeshnair/Downloads/VoiceAssistant-2/vosk-model-small-en-us-0.15"  # Set to your vosk model directory
+    voice_listener = VoskCommandListener(vosk_model_path, COMMANDS)
+    voice_listener.start()
+
+    args = parse_args()
+    mode = args.profile or args.mode
+    settings = resolve_mode_settings(mode)
+
+    preview_enabled = settings.preview_default
+    if args.preview:
+        preview_enabled = True
+    if args.no_preview:
+        preview_enabled = False
+
+    audio_enabled = not args.no_audio
+    preview_stride = 1
+    if preview_enabled and mode == "pi_debug":
+        camera_fps = float(settings.color_fps)
+        target_preview_fps = max(1.0, float(args.preview_fps))
+        preview_stride = max(1, int(round(camera_fps / target_preview_fps)))
+
+    if preview_enabled:
+        cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(WINDOW_NAME, *settings.window_size)
+
+    processor = NavigationProcessor(config=settings.processor_config)
+    audio: NavigationAudioController | None = None
+    frame_index = 0
+    
+    pi_audio: NavigationAudioController | None = None
+    trip_camera = PiTripCamera(camera_index=0)
+    trip_detector = PiTripHazardDetector(column_count=processor.config.cols)
+
+    try:
+        with D435iDriver(
+            depth_size=settings.depth_size,
+            color_size=settings.color_size,
+            depth_fps=settings.depth_fps,
+            color_fps=settings.color_fps,
+            align_depth_to_color=settings.align_depth_to_color,
+        ) as driver:
+            while True:
+                bundle = driver.wait_for_bundle(timeout_s=1.0)
+                if bundle is None:
+                    if driver.last_error is not None:
+                        raise RuntimeError("Capture thread stopped after an error") from driver.last_error
+                    continue
+
+                if audio_enabled and audio is None:
+                    # Delay audio import/startup until after first camera bundle arrives.
+                    from src.navigation_audio import NavigationAudioController, NavigationAudioConfig
+
+                    audio = NavigationAudioController(column_count=processor.config.cols, config= NavigationAudioConfig(use_pulse_gating=False),)
+                    audio.start()
+
+                    pi_audio = NavigationAudioController(column_count=processor.config.cols, config= NavigationAudioConfig(use_pulse_gating=True),)
+                    pi_audio.start()
+
+                analysis = processor.process_bundle(bundle)
+
+                trip_frame = trip_camera.read()
+                trip_detections = ()
+                if trip_frame is not None:
+                    trip_detections = trip_detector.detect(trip_frame.image)
+
+                trip_states = build_trip_column_states(
+                    trip_detections=trip_detections,
+                    cols=processor.config.cols,
+                )
+    
+                # --- Poll for voice commands and update flags ---
+                cmd = voice_listener.poll_command()
+                if cmd:
+                    if cmd == "enable object avoidance":
+                        object_avoidance_enabled = True
+                        print("[Voice] Object avoidance enabled.")
+                    elif cmd == "disable object avoidance":
+                        object_avoidance_enabled = False
+                        print("[Voice] Object avoidance disabled.")
+                    elif cmd == "enable tripping hazards":
+                        trip_hazard_enabled = True
+                        print("[Voice] Tripping hazards enabled.")
+                    elif cmd == "disable tripping hazards":
+                        trip_hazard_enabled = False
+                        print("[Voice] Tripping hazards disabled.")
+                    elif cmd == "enable path finding":
+                        path_finding_enabled = True
+                        print("[Voice] Path finding enabled.")
+                    elif cmd == "disable path finding":
+                        path_finding_enabled = False
+                        print("[Voice] Path finding disabled.")
+
+                # --- Apply features based on flags ---
+                if pi_audio is not None and trip_hazard_enabled:
+                    pi_audio.apply(trip_states, now_s=time.monotonic())
+
+                if audio is not None and object_avoidance_enabled:
+                    audio.apply(analysis.column_states, now_s=time.monotonic())
+                # (Path finding logic would go here, wrapped in if path_finding_enabled: ...)
+                if preview_enabled:
+                    if frame_index % preview_stride == 0:
+                        frame = compose_debug_frame(bundle.color.image, bundle.depth.image, analysis)
+                        cv2.imshow(WINDOW_NAME, frame)
+                    key = cv2.waitKey(1) & 0xFF
+                    if key in (27, ord("q")):
+                        break
+                frame_index += 1
+    finally:
+        voice_listener.stop()
+        if audio is not None:
+            audio.stop()
+        if pi_audio is not None:
+            pi_audio.stop()
+        if preview_enabled:
+            with suppress(Exception):
+                cv2.destroyWindow(WINDOW_NAME)
+            cv2.destroyAllWindows()
 
 
 def resolve_mode_settings(mode: str) -> RuntimeModeSettings:
@@ -109,6 +231,21 @@ def parse_args() -> argparse.Namespace:
 
 
 def run_demo() -> None:
+    # --- Feature flags ---
+    object_avoidance_enabled = True
+    trip_hazard_enabled = True
+    path_finding_enabled = True  # Placeholder for future path finding logic
+
+    # --- Voice command setup ---
+    COMMANDS = [
+        "enable object avoidance", "disable object avoidance",
+        "enable tripping hazards", "disable tripping hazards",
+        "enable path finding", "disable path finding"
+    ]
+    vosk_model_path = "/Users/rajeshnair/Downloads/VoiceAssistant-2"  # Local Vosk model path
+    voice_listener = VoskCommandListener(vosk_model_path, COMMANDS)
+    voice_listener.start()
+
     args = parse_args()
     mode = args.profile or args.mode
     settings = resolve_mode_settings(mode)
@@ -130,73 +267,36 @@ def run_demo() -> None:
         cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(WINDOW_NAME, *settings.window_size)
 
-    processor = NavigationProcessor(config=settings.processor_config)
-    audio: NavigationAudioController | None = None
-    frame_index = 0
-    
-    pi_audio: NavigationAudioController | None = None
-    trip_camera = PiTripCamera(camera_index=0)
-    trip_detector = PiTripHazardDetector(column_count=processor.config.cols)
-
+    print("[INFO] RealSense and Pi camera code is disabled for local testing.")
+    print("[INFO] Speak commands like 'enable object avoidance', 'disable tripping hazards', etc.")
+    print("[INFO] Press Ctrl+C to exit.")
     try:
-        with D435iDriver(
-            depth_size=settings.depth_size,
-            color_size=settings.color_size,
-            depth_fps=settings.depth_fps,
-            color_fps=settings.color_fps,
-            align_depth_to_color=settings.align_depth_to_color,
-        ) as driver:
-            while True:
-                bundle = driver.wait_for_bundle(timeout_s=1.0)
-                if bundle is None:
-                    if driver.last_error is not None:
-                        raise RuntimeError("Capture thread stopped after an error") from driver.last_error
-                    continue
-
-                if audio_enabled and audio is None:
-                    # Delay audio import/startup until after first camera bundle arrives.
-                    from src.navigation_audio import NavigationAudioController, NavigationAudioConfig
-
-                    audio = NavigationAudioController(column_count=processor.config.cols, config= NavigationAudioConfig(use_pulse_gating=False),)
-                    audio.start()
-
-                    pi_audio = NavigationAudioController(column_count=processor.config.cols, config= NavigationAudioConfig(use_pulse_gating=True),)
-                    pi_audio.start()
-
-                analysis = processor.process_bundle(bundle)
-
-                trip_frame = trip_camera.read()
-                trip_detections = ()
-                if trip_frame is not None:
-                    trip_detections = trip_detector.detect(trip_frame.image)
-
-                trip_states = build_trip_column_states(
-                    trip_detections=trip_detections,
-                    cols=processor.config.cols,
-                )
-    
-                if pi_audio is not None:
-                    pi_audio.apply(trip_states, now_s=time.monotonic())
-
-                if audio is not None:
-                    audio.apply(analysis.column_states, now_s=time.monotonic())
-                if preview_enabled:
-                    if frame_index % preview_stride == 0:
-                        frame = compose_debug_frame(bundle.color.image, bundle.depth.image, analysis)
-                        cv2.imshow(WINDOW_NAME, frame)
-                    key = cv2.waitKey(1) & 0xFF
-                    if key in (27, ord("q")):
-                        break
-                frame_index += 1
+        while True:
+            cmd = voice_listener.poll_command()
+            if cmd:
+                if cmd == "enable object avoidance":
+                    object_avoidance_enabled = True
+                    print("[Voice] Object avoidance enabled.")
+                elif cmd == "disable object avoidance":
+                    object_avoidance_enabled = False
+                    print("[Voice] Object avoidance disabled.")
+                elif cmd == "enable tripping hazards":
+                    trip_hazard_enabled = True
+                    print("[Voice] Tripping hazards enabled.")
+                elif cmd == "disable tripping hazards":
+                    trip_hazard_enabled = False
+                    print("[Voice] Tripping hazards disabled.")
+                elif cmd == "enable path finding":
+                    path_finding_enabled = True
+                    print("[Voice] Path finding enabled.")
+                elif cmd == "disable path finding":
+                    path_finding_enabled = False
+                    print("[Voice] Path finding disabled.")
+            time.sleep(0.1)
+    except KeyboardInterrupt:
+        print("[INFO] Exiting test loop.")
     finally:
-        if audio is not None:
-            audio.stop()
-        if pi_audio is not None:
-            pi_audio.stop()
-        if preview_enabled:
-            with suppress(Exception):
-                cv2.destroyWindow(WINDOW_NAME)
-            cv2.destroyAllWindows()
+        voice_listener.stop()
 
 
 def compose_debug_frame(
