@@ -39,7 +39,7 @@ def run_demo() -> None:
         "enable tripping hazards", "disable tripping hazards",
         "enable path finding", "disable path finding"
     ]
-    vosk_model_path = "/Users/rajeshnair/Downloads/VoiceAssistant-2/vosk-model-small-en-us-0.15"  # Set to your vosk model directory
+    vosk_model_path = "ADD VOSK MODEL DIRECTORY HERE"  
     voice_listener = VoskCommandListener(vosk_model_path, COMMANDS)
     voice_listener.start()
 
