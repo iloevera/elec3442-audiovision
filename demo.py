@@ -8,7 +8,25 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 def main():
     parser = argparse.ArgumentParser(description="AudioVision Demo Runner")
     parser.add_argument("--audio", action="store_true", help="Run the audio rotating tones demo")
+    
+    # Navigation Assist arguments
     parser.add_argument("--navigation", action="store_true", help="Run the navigation assist demo")
+    parser.add_argument(
+        "--mode",
+        choices=("desktop_debug", "pi_normal", "pi_debug"),
+        default="desktop_debug",
+        help="Runtime profile for navigation latency/quality trade-offs",
+    )
+    parser.add_argument("--preview", action="store_true", help="Force-enable navigation preview window")
+    parser.add_argument("--no-preview", action="store_true", help="Disable the navigation OpenCV debug window")
+    parser.add_argument(
+        "--preview-fps",
+        type=float,
+        default=10.0,
+        help="Navigation preview refresh rate target",
+    )
+    parser.add_argument("--no-audio", action="store_true", help="Disable navigation spatial audio output")
+
     parser.add_argument("--realsense", action="store_true", help="Run the RealSense preview demo")
     parser.add_argument("--imu", action="store_true", help="Run the SenseHat IMU demo")
 
@@ -27,7 +45,7 @@ def main():
     elif args.navigation:
         print("Launching Navigation Assist Demo...")
         from demo.demo_navigation_assist import run_demo
-        run_demo()
+        run_demo(args)
 
     elif args.realsense:
         print("Launching RealSense Preview Demo...")

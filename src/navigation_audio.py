@@ -11,8 +11,8 @@ from .navigation_processing import NavigationColumnState
 class NavigationAudioConfig:
     sample_rate: int = 48_000
     block_size: int = 512
-    base_volume: float = 0.22
-    output_gain: float = 2.0
+    base_volume: float = 0.50
+    output_gain: float = 8.0
     min_audible_volume: float = 0.08
     near_priority_distance_m: float = 0.50
     ttc_priority_horizon_s: float = 5.0

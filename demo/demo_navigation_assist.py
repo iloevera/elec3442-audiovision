@@ -77,8 +77,8 @@ def resolve_mode_settings(mode: str) -> RuntimeModeSettings:
     return RuntimeModeSettings(
         depth_size=(640, 480),
         color_size=(640, 480),
-        depth_fps=60,
-        color_fps=60,
+        depth_fps=30,
+        color_fps=30,
         align_depth_to_color=True,
         processor_config=NavigationProcessorConfig(),
         preview_default=True,
@@ -111,22 +111,24 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def run_demo() -> None:
-    args = parse_args()
-    mode = args.profile or args.mode
+def run_demo(args: argparse.Namespace | None = None) -> None:
+    if args is None:
+        args = parse_args()
+    
+    mode = getattr(args, "profile", None) or args.mode
     settings = resolve_mode_settings(mode)
 
     preview_enabled = settings.preview_default
-    if args.preview:
+    if getattr(args, "preview", False):
         preview_enabled = True
-    if args.no_preview:
+    if getattr(args, "no_preview", False):
         preview_enabled = False
 
-    audio_enabled = not args.no_audio
+    audio_enabled = not getattr(args, "no_audio", False)
     preview_stride = 1
     if preview_enabled and mode == "pi_debug":
         camera_fps = float(settings.color_fps)
-        target_preview_fps = max(1.0, float(args.preview_fps))
+        target_preview_fps = max(1.0, float(getattr(args, "preview_fps", 10.0)))
         preview_stride = max(1, int(round(camera_fps / target_preview_fps)))
 
     if preview_enabled:

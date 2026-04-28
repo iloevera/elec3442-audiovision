@@ -18,9 +18,6 @@ class SpatialTone:
     MAX_PITCH_HZ = 20_000.0
     _MIXER = get_shared_mixer()
 
-    SPEED_OF_SOUND = 343.0
-    EAR_DISTANCE_M = 0.18
-
     def __init__(
         self,
         initial_pitch_hz: float = 440.0,
@@ -98,7 +95,8 @@ class SpatialTone:
 
     def set_azimuth(self, azimuth_deg: float) -> None:
         with self._lock:
-            self._azimuth_deg = self._normalize_azimuth(azimuth_deg)
+            # Constrain azimuth to +/- 90 degrees as requested
+            self._azimuth_deg = max(-90.0, min(90.0, float(azimuth_deg)))
             self._left_gain, self._right_gain = self._calculate_spatial_params(self._azimuth_deg)
 
     def set_waveform(self, waveform: str) -> None:
@@ -120,7 +118,8 @@ class SpatialTone:
             if volume is not None:
                 self._volume = self._clamp_volume(volume)
             if azimuth_deg is not None:
-                self._azimuth_deg = self._normalize_azimuth(azimuth_deg)
+                # Constrain azimuth to +/- 90 degrees
+                self._azimuth_deg = max(-90.0, min(90.0, float(azimuth_deg)))
                 self._left_gain, self._right_gain = self._calculate_spatial_params(self._azimuth_deg)
             if waveform is not None:
                 self._waveform = waveform
@@ -154,20 +153,10 @@ class SpatialTone:
         else:  # default to sine
             mono = np.sin(phases).astype(np.float32)
 
-        # Apply ITD (Interaural Time Difference)
-        theta = np.deg2rad(azimuth_deg)
-        itd_s = (self.EAR_DISTANCE_M * np.sin(theta)) / self.SPEED_OF_SOUND
-        itd_samples = itd_s * self.sample_rate
-
-        n = np.arange(frames, dtype=np.float32)
-        if itd_samples >= 0:
-            # Source is to the right, left ear is delayed
-            left = np.interp(n - itd_samples, n, mono, left=0.0, right=0.0).astype(np.float32)
-            right = mono
-        else:
-            # Source is to the left, right ear is delayed
-            left = mono
-            right = np.interp(n + itd_samples, n, mono, left=0.0, right=0.0).astype(np.float32)
+        # Removed ITD (Interaural Time Difference) to fix buzzing/clicking artifacts.
+        # Focused only on ILD (Interaural Level Difference) with azimuth constrained to +/- 90 deg.
+        left = mono
+        right = mono
 
         # Apply ILD (Interaural Level Difference) and Volume
         stereo = np.empty((frames, 2), dtype=np.float32)

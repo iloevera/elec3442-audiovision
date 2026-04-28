@@ -305,8 +305,14 @@ class D435iDriver:
         if depth_intrinsics is None or color_intrinsics is None or depth_scale is None:
             raise RuntimeError("Driver metadata was not initialized before capture")
 
+        # Handle upside-down camera mounting by rotating 180 degrees (axis 0 and 1)
+        depth_image = np.asanyarray(depth_frame.get_data()).copy()
+        color_image = np.asanyarray(color_frame.get_data()).copy()
+        depth_image = np.flip(depth_image, axis=(0, 1))
+        color_image = np.flip(color_image, axis=(0, 1))
+
         depth_data = DepthFrameData(
-            image=np.asanyarray(depth_frame.get_data()).copy(),
+            image=depth_image,
             intrinsics=depth_intrinsics,
             timestamp_ms=float(depth_frame.get_timestamp()),
             host_timestamp_s=host_timestamp_s,
@@ -314,7 +320,7 @@ class D435iDriver:
             depth_scale=depth_scale,
         )
         color_data = ColorFrameData(
-            image=np.asanyarray(color_frame.get_data()).copy(),
+            image=color_image,
             intrinsics=color_intrinsics,
             timestamp_ms=float(color_frame.get_timestamp()),
             host_timestamp_s=host_timestamp_s,

@@ -83,19 +83,16 @@ class SenseHatDriver:
                 # Raw accelerometer values (G-force acting on the sensor)
                 accel = self._sense.get_accelerometer_raw()
                 # SenseHat returns acceleration. When still and level (LEDs up), z correlates to ~1.0
-                # Mapping:
-                # Camera X = SenseHat X
-                # Camera Y = -SenseHat Y
+                # Mapping for upside-down camera:
+                # Camera X = -SenseHat X
+                # Camera Y = SenseHat Y
                 # Camera Z = SenseHat Z
                 
-                # We want a GRAVITY vector (pointing down).
-                # If the sensor measures acceleration 'a', then gravity 'g' is approximately '-a'
-                # when the sensor is stationary.
                 sx, sy, sz = accel['x'], accel['y'], accel['z']
                 
                 # Map to camera frame:
-                cx = sx
-                cy = -sy
+                cx = -sx
+                cy = sy
                 cz = sz
                 
                 # Gravity vector (opposite of acceleration felt by sensor)
