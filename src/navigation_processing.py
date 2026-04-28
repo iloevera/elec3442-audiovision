@@ -271,15 +271,9 @@ class NavigationProcessor:
         return self._cached_ground_plane
 
     def _estimate_gravity_unit(self, bundle: FrameBundle) -> Optional[np.ndarray]:
-        accel = bundle.latest_accel
-        if accel is None:
-            return None
-
-        vector = accel.xyz.astype(np.float64)
-        norm = float(np.linalg.norm(vector))
-        if norm < 1e-6:
-            return None
-        return (vector / norm).astype(np.float32)
+        if bundle.gravity_unit is not None:
+            return bundle.gravity_unit.astype(np.float32)
+        return None
 
     @staticmethod
     def _depth_to_points(
