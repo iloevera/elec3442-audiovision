@@ -145,13 +145,15 @@ class NavigationProcessor:
         self._frame_index = 0
         self._cached_ground_plane: Optional[GroundPlaneEstimate] = None
 
-    def process_bundle(self, bundle: FrameBundle) -> NavigationFrameAnalysis:
+    def process_bundle(self, bundle: FrameBundle, gravity_unit: Optional[np.ndarray] = None) -> NavigationFrameAnalysis:
         depth_m = bundle.depth.image.astype(np.float32) * float(bundle.depth.depth_scale)
         valid_mask = np.isfinite(depth_m)
         valid_mask &= depth_m >= self.config.min_depth_m
         valid_mask &= depth_m <= self.config.max_depth_m
 
-        gravity_unit = self._estimate_gravity_unit(bundle)
+        if gravity_unit is not None:
+             gravity_unit = gravity_unit.astype(np.float32)
+
         full_points, _ = self._depth_to_points(
             depth_m=depth_m,
             intrinsics=bundle.depth.intrinsics,
@@ -269,11 +271,6 @@ class NavigationProcessor:
                 gravity_unit=gravity_unit,
             )
         return self._cached_ground_plane
-
-    def _estimate_gravity_unit(self, bundle: FrameBundle) -> Optional[np.ndarray]:
-        if bundle.gravity_unit is not None:
-            return bundle.gravity_unit.astype(np.float32)
-        return None
 
     @staticmethod
     def _depth_to_points(

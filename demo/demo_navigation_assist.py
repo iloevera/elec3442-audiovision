@@ -17,6 +17,7 @@ if __name__ == "__main__":
 
 from src.navigation_processing import NavigationFrameAnalysis, NavigationProcessor, NavigationProcessorConfig
 from src.realsense_driver import D435iDriver
+from src.sensehat_driver import SenseHatDriver
 
 if TYPE_CHECKING:
     from src.navigation_audio import NavigationAudioController
@@ -136,6 +137,10 @@ def run_demo() -> None:
     audio: NavigationAudioController | None = None
     frame_index = 0
 
+    # Initialize SenseHatDriver for gravity tracking
+    imu = SenseHatDriver()
+    imu.start()
+
     try:
         with D435iDriver(
             depth_size=settings.depth_size,
@@ -151,6 +156,8 @@ def run_demo() -> None:
                         raise RuntimeError("Capture thread stopped after an error") from driver.last_error
                     continue
 
+                gravity_unit = imu.get_gravity_unit()
+
                 if audio_enabled and audio is None:
                     # Delay audio import/startup until after first camera bundle arrives.
                     from src.navigation_audio import NavigationAudioController
@@ -158,7 +165,7 @@ def run_demo() -> None:
                     audio = NavigationAudioController(column_count=processor.config.cols)
                     audio.start()
 
-                analysis = processor.process_bundle(bundle)
+                analysis = processor.process_bundle(bundle, gravity_unit=gravity_unit)
                 if audio is not None:
                     audio.apply(analysis.column_states, now_s=time.monotonic())
 
@@ -171,6 +178,7 @@ def run_demo() -> None:
                         break
                 frame_index += 1
     finally:
+        imu.stop()
         if audio is not None:
             audio.stop()
         if preview_enabled:
