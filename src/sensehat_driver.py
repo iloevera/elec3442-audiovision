@@ -63,6 +63,50 @@ class SenseHatDriver:
         with self._lock:
             return self._latest_orientation
 
+    # ── LED matrix ────────────────────────────────────────────────────────────
+
+    def show_risk_grid(self, risk_grid: np.ndarray) -> None:
+        """Map a (rows, cols) float risk grid onto the 8×8 LED matrix.
+
+        Risk 0.0 → green, Risk 1.0 → red. Nearest-neighbour mapping.
+        Call from the main thread only.
+        """
+        grid_rows, grid_cols = risk_grid.shape
+        pixels = []
+        for led_r in range(8):
+            gr = led_r * grid_rows // 8
+            for led_c in range(8):
+                gc = led_c * grid_cols // 8
+                risk = float(np.clip(risk_grid[gr, gc], 0.0, 1.0))
+                pixels.append([int(risk * 200), int((1.0 - risk) * 200), 0])
+        self._sense.set_pixels(pixels)
+
+    def show_settings_hud(self, volume_level: int, nav_enabled: bool) -> None:
+        """Display a settings HUD on the 8×8 LED matrix.
+
+        Left 4 columns: volume bar (fills bottom-up, green→red, 0–10 scale).
+        Right 4 columns: solid green = nav on, solid red = nav off.
+        Call from the main thread only.
+        """
+        filled_rows = round(int(np.clip(volume_level, 0, 10)) * 8 / 10)
+        nav_color = [0, 200, 0] if nav_enabled else [180, 0, 0]
+        pixels = []
+        for led_r in range(8):
+            idx_from_bottom = 7 - led_r  # 0 at bottom row, 7 at top row
+            row_lit = idx_from_bottom < filled_rows
+            if row_lit:
+                t = idx_from_bottom / 7.0  # 0=bottom(green) → 1=top(red)
+                vol_color = [int(t * 200), int((1.0 - t) * 200), 0]
+            else:
+                vol_color = [15, 15, 15]
+            for led_c in range(8):
+                pixels.append(list(vol_color) if led_c < 4 else list(nav_color))
+        self._sense.set_pixels(pixels)
+
+    def clear_leds(self) -> None:
+        """Clear the LED matrix. Call from the main thread only."""
+        self._sense.clear()
+
     def _worker_loop(self) -> None:
         # The SenseHat is rigidly attached to the camera.
         # Orientation mapping based on calibration:
