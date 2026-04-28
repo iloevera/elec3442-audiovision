@@ -78,7 +78,7 @@ class SenseHatDriver:
             for led_c in range(8):
                 gc = led_c * grid_cols // 8
                 risk = float(np.clip(risk_grid[gr, gc], 0.0, 1.0))
-                pixels.append([int(risk * 200), int((1.0 - risk) * 200), 0])
+                pixels.append([int(risk * 100), int((1.0 - risk) * 100), 0])
         self._sense.set_pixels(pixels)
 
     def show_settings_hud(self, volume_level: int, nav_enabled: bool) -> None:
@@ -89,16 +89,16 @@ class SenseHatDriver:
         Call from the main thread only.
         """
         filled_rows = round(int(np.clip(volume_level, 0, 10)) * 8 / 10)
-        nav_color = [0, 200, 0] if nav_enabled else [180, 0, 0]
+        nav_color = [0, 100, 0] if nav_enabled else [90, 0, 0]
         pixels = []
         for led_r in range(8):
             idx_from_bottom = 7 - led_r  # 0 at bottom row, 7 at top row
             row_lit = idx_from_bottom < filled_rows
             if row_lit:
                 t = idx_from_bottom / 7.0  # 0=bottom(green) → 1=top(red)
-                vol_color = [int(t * 200), int((1.0 - t) * 200), 0]
+                vol_color = [int(t * 100), int((1.0 - t) * 100), 0]
             else:
-                vol_color = [15, 15, 15]
+                vol_color = [7, 7, 7]
             for led_c in range(8):
                 pixels.append(list(vol_color) if led_c < 4 else list(nav_color))
         self._sense.set_pixels(pixels)
