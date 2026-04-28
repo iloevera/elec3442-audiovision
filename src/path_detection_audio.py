@@ -48,7 +48,7 @@ class PathGuidanceAudio:
 
         # Create the spatial tone 
         self._tone = SpatialTone(
-            initial_pitch_hz = self.config_pitch_center_hz,
+            initial_pitch_hz = self.config.pitch_center_hz,
             initial_volume = 0.0,
             initial_azimuth_deg = 0.0,
         )
@@ -58,7 +58,7 @@ class PathGuidanceAudio:
         self._last_azimuth = 0.0
         self._last_volume = 0.0
 
-    def update(self, analysis: NavigationFrameAnalaysis) -> None:
+    def update(self, analysis: NavigationFrameAnalysis) -> None:
         '''
         Call this function at every frame to update guidance tone based on current ground plane and hazards.
         '''
@@ -66,37 +66,37 @@ class PathGuidanceAudio:
         column_hazards = self._get_column_hazard_levels(analysis)
 
         # Find walkable centre from ground mask
-        walkable_centre_col = self.find_walkable_center_column(analysis.ground_mask)
+        walkable_centre_col = self._find_walkable_center_column(analysis.ground_mask)
 
         if walkable_centre_col is None:
             # If no ground is detected, audio fades eventually
             self._no_ground_counter += 1
             if self._no_ground_counter >= self.config.ground_loss_frames_before_fade:
                 self._update_tone(azimuth_deg=self._last_azimuth, volume=0.0)
-                return
+            return
 
-            self._no_ground_counter = 0
+        self._no_ground_counter = 0
 
-            # Calculate ideal guidance direction
-            ideal_azimuth = self._col_to_azimuth(walkable_center_col)
+        # Calculate ideal guidance direction
+        ideal_azimuth = self._col_to_azimuth(walkable_centre_col)
 
-            # Apply hazard override: shift guidance away from dangerous columns
-            safe_azimuth, hazard_factor = self._apply_hazard_override(
-                ideal_azimuth,
-                column_hazards
-            )
+        # Apply hazard override: shift guidance away from dangerous columns
+        safe_azimuth, hazard_factor = self._apply_hazard_override(
+            ideal_azimuth,
+            column_hazards
+        )
 
-            # Compute pitch (higher when further off path, but always smooth)
-            pitch = self._compute_pitch(safe_azimuth)
+        # Compute pitch (higher when further off path, but always smooth)
+        pitch = self._compute_pitch(safe_azimuth)
 
-            # Compute volume (reduced if hazards present)
-            base_volume = self._compute_pitch(safe_azimuth)
-            final_volume = base_volume * (1.0 - hazard_factor * self.config.hazard_volume_reduction) # Reduce volume when hazards are present/closer
+        # Compute volume (reduced if hazards present)
+        base_volume = self._compute_pitch(safe_azimuth)
+        final_volume = base_volume * (1.0 - hazard_factor * self.config.hazard_volume_reduction) # Reduce volume when hazards are present/closer
 
-            self._update_tone(azimuth_deg=safe_azimuth, pitch_hz=pitch, volume=final_volume)
+        self._update_tone(azimuth_deg=safe_azimuth, pitch_hz=pitch, volume=final_volume)
 
-            self._last_azimuth = safe_azimuth
-            self._last_volume = final_volume
+        self._last_azimuth = safe_azimuth
+        self._last_volume = final_volume
 
 
     def _get_column_hazard_levels(self, analysis: NavigationFrameAnalysis) -> np.ndarray:
@@ -107,7 +107,7 @@ class PathGuidanceAudio:
 
         for col_state in analysis.column_states:
             if col_state.col < self.config.num_columns:
-                hazards[col_state.col] = col_state.risk_Score
+                hazards[col_state.col] = col_state.risk_score
 
         return hazards
 
@@ -115,7 +115,7 @@ class PathGuidanceAudio:
         '''
         Find which column (0-4) contains the center of walkable area (Bottom portion of depth map only)
         '''
-        if ground_mask is none or not np.any(ground_mask):
+        if ground_mask is None or not np.any(ground_mask):
             return None
 
         rows, cols = ground_mask.shape
@@ -129,9 +129,9 @@ class PathGuidanceAudio:
         walkable_counts = []
         for col_ind in range(self.config.num_columns):
             start_x = col_ind * col_width
-            if col_ind < (self.config.num_columns - 1)
+            if col_ind < (self.config.num_columns - 1):
                 end_x = start_x + col_width
-            else 
+            else: 
                 end_x = cols
             col_region = bottom_ground[:, start_x:end_x]   
             walkable_counts.append(np.sum(col_region))
@@ -141,7 +141,7 @@ class PathGuidanceAudio:
             return None
 
         # Weighted center of mass (the best possible postition to go next, i.e. the area with the most walkable pixels))
-        col_indices = np.arange(self.config.nym_columns)
+        col_indices = np.arange(self.config.num_columns)
         center_of_mass = np.sum(col_indices * walkable_counts) / total_walkable
         
         return int(round(center_of_mass))
@@ -151,10 +151,10 @@ class PathGuidanceAudio:
         Convert column index to azimuth angle
         '''
         centre = (self.config.num_columns - 1) / 2.0
-        normalized = (col - center) / center
+        normalized = (col - centre) / centre
         return normalized * self.config.max_guidance_deg
 
-    def _apply_hazard_override(self, ideal_azimuth: float, column_hazard: np.ndarray) -> tuple[float, float]:
+    def _apply_hazard_override(self, ideal_azimuth: float, column_hazards: np.ndarray) -> tuple[float, float]:
         '''
         Adjust guidance to avoid hazardous columns
         Returns (adjusted_azimuth, hazard_factor) where hazard_factor is 0-1
@@ -169,12 +169,12 @@ class PathGuidanceAudio:
 
         # If hazardous, find safest neighbouring column
         best_col = ideal_col
-        best_hazard = column_hazard[ideal_col]
+        best_hazard = column_hazards[ideal_col]
 
-        for offset in [-1:1]: # Check left and right
+        for offset in [-1,1]: # Check left and right
             neighbour = ideal_col + offset
             if 0 <= neighbour < self.config.num_columns:
-                if column_hazard[neighbour] < best_hazard:
+                if column_hazards[neighbour] < best_hazard:
                     best_hazard = column_hazards[neighbour]
                     best_col = neighbour
 
@@ -204,11 +204,11 @@ class PathGuidanceAudio:
         off_centre_factor = min(1.0, off_centre_factor)
 
         pitch_range = self.config.pitch_extreme_hz - self.config.pitch_center_hz
-        pitch = self.config.pitch_center_hz + (off_center_factor * pitch_range)
+        pitch = self.config.pitch_center_hz + (off_centre_factor * pitch_range)
 
         return pitch
 
-    def _compute_volume(seld, azimuth_deg: float) -> float:
+    def _compute_volume(self, azimuth_deg: float) -> float:
         '''
         Compute volume based on how far off-centre we are
         '''
@@ -242,7 +242,3 @@ class PathGuidanceAudio:
             'azimuth_deg': self._last_azimuth,
             'volume': self._last_volume,
         }
-        
-
-        
-        
