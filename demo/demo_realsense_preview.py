@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import sys
+import os
 from contextlib import suppress
 
 import cv2
 import numpy as np
+
+# Add project root to path if running directly
+if __name__ == "__main__":
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.realsense_driver import D435iDriver, FrameBundle, IMUSample
 
