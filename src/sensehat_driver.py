@@ -64,15 +64,13 @@ class SenseHatDriver:
             return self._latest_orientation
 
     def _worker_loop(self) -> None:
-        # We assume the SenseHat is rigidly attached to the camera.
-        # Orientation mapping details:
+        # The SenseHat is rigidly attached to the camera.
+        # Orientation mapping based on calibration:
         # Camera: +X Right, +Y Down, +Z Forward.
-        # User confirmed top layer faces +Z (same as camera).
-        # Standard SenseHat (Leds up): X points right, Y forward, Z up.
-        # If TOP is facing +Z:
-        # SenseHat Z -> Camera +Z
-        # SenseHat X -> Camera +X
-        # SenseHat Y -> Camera -Y (Up)
+        # Calibration results show:
+        # Camera +X (Right)   -> SenseHat -X
+        # Camera +Y (Down)    -> SenseHat +Y
+        # Camera +Z (Forward) -> SenseHat -Z
         
         period = 1.0 / self._update_rate_hz
         
@@ -82,18 +80,13 @@ class SenseHatDriver:
             try:
                 # Raw accelerometer values (G-force acting on the sensor)
                 accel = self._sense.get_accelerometer_raw()
-                # SenseHat returns acceleration. When still and level (LEDs up), z correlates to ~1.0
-                # Mapping for upside-down camera:
-                # Camera X = -SenseHat X
-                # Camera Y = SenseHat Y
-                # Camera Z = SenseHat Z
                 
                 sx, sy, sz = accel['x'], accel['y'], accel['z']
                 
-                # Map to camera frame:
+                # Map to camera frame based on calibration:
                 cx = -sx
                 cy = sy
-                cz = sz
+                cz = -sz
                 
                 # Gravity vector (opposite of acceleration felt by sensor)
                 gv = -np.array([cx, cy, cz], dtype=np.float32)
