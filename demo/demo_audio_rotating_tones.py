@@ -26,11 +26,13 @@ def run_demo() -> None:
         initial_pitch_hz=left_base_hz,
         initial_volume=0.25,
         initial_azimuth_deg=-90,
+        waveform="sine",
     )
     right_tone = SpatialTone(
         initial_pitch_hz=right_base_hz,
         initial_volume=0.20,
         initial_azimuth_deg=90,
+        waveform="triangle",
     )
     left_tone.start()
     right_tone.start()

@@ -18,11 +18,15 @@ class SpatialTone:
     MAX_PITCH_HZ = 20_000.0
     _MIXER = get_shared_mixer()
 
+    SPEED_OF_SOUND = 343.0
+    EAR_DISTANCE_M = 0.18
+
     def __init__(
         self,
         initial_pitch_hz: float = 440.0,
         initial_volume: float = 0.2,
         initial_azimuth_deg: float = 0.0,
+        waveform: str = "sine",
         sample_rate: int = 48_000,
         block_size: int = 512,
     ) -> None:
@@ -36,7 +40,8 @@ class SpatialTone:
         self._pitch_hz = self._clamp_pitch(initial_pitch_hz)
         self._volume = self._clamp_volume(initial_volume)
         self._azimuth_deg = self._normalize_azimuth(initial_azimuth_deg)
-        self._left_gain, self._right_gain = self._azimuth_to_equal_power_gains(self._azimuth_deg)
+        self._waveform = waveform
+        self._left_gain, self._right_gain = self._calculate_spatial_params(self._azimuth_deg)
         self._sample_idx = np.arange(self.block_size, dtype=np.float64)
         self._silence_block = np.zeros((self.block_size, 2), dtype=np.float32)
 
@@ -54,6 +59,11 @@ class SpatialTone:
     def azimuth_deg(self) -> float:
         with self._lock:
             return self._azimuth_deg
+
+    @property
+    def waveform(self) -> str:
+        with self._lock:
+            return self._waveform
 
     def start(self) -> None:
         """Start this tone voice inside the shared mixer."""
@@ -89,7 +99,11 @@ class SpatialTone:
     def set_azimuth(self, azimuth_deg: float) -> None:
         with self._lock:
             self._azimuth_deg = self._normalize_azimuth(azimuth_deg)
-            self._left_gain, self._right_gain = self._azimuth_to_equal_power_gains(self._azimuth_deg)
+            self._left_gain, self._right_gain = self._calculate_spatial_params(self._azimuth_deg)
+
+    def set_waveform(self, waveform: str) -> None:
+        with self._lock:
+            self._waveform = waveform
 
     def set_params(
         self,
@@ -97,6 +111,7 @@ class SpatialTone:
         pitch_hz: Optional[float] = None,
         volume: Optional[float] = None,
         azimuth_deg: Optional[float] = None,
+        waveform: Optional[str] = None,
     ) -> None:
         """Atomically update any subset of parameters."""
         with self._lock:
@@ -106,7 +121,9 @@ class SpatialTone:
                 self._volume = self._clamp_volume(volume)
             if azimuth_deg is not None:
                 self._azimuth_deg = self._normalize_azimuth(azimuth_deg)
-                self._left_gain, self._right_gain = self._azimuth_to_equal_power_gains(self._azimuth_deg)
+                self._left_gain, self._right_gain = self._calculate_spatial_params(self._azimuth_deg)
+            if waveform is not None:
+                self._waveform = waveform
 
     def _render_stereo_block(self, frames: int) -> np.ndarray:
         with self._lock:
@@ -116,6 +133,8 @@ class SpatialTone:
             left_gain = self._left_gain
             right_gain = self._right_gain
             phase_start = self._phase
+            waveform = self._waveform
+            azimuth_deg = self._azimuth_deg
 
             phase_inc = (2.0 * math.pi * pitch_hz) / float(self.sample_rate)
             self._phase = (self._phase + frames * phase_inc) % (2.0 * math.pi)
@@ -127,10 +146,33 @@ class SpatialTone:
 
         sample_idx = self._sample_idx[:frames] if frames <= self.block_size else np.arange(frames, dtype=np.float64)
         phases = phase_start + sample_idx * phase_inc
-        mono = np.sin(phases).astype(np.float32)
+
+        if waveform == "triangle":
+            # Map phase [0, 2pi] to [0, 1]
+            x = (phases / (2.0 * math.pi)) % 1.0
+            mono = (4.0 * np.abs(x - 0.5) - 1.0).astype(np.float32)
+        else:  # default to sine
+            mono = np.sin(phases).astype(np.float32)
+
+        # Apply ITD (Interaural Time Difference)
+        theta = np.deg2rad(azimuth_deg)
+        itd_s = (self.EAR_DISTANCE_M * np.sin(theta)) / self.SPEED_OF_SOUND
+        itd_samples = itd_s * self.sample_rate
+
+        n = np.arange(frames, dtype=np.float32)
+        if itd_samples >= 0:
+            # Source is to the right, left ear is delayed
+            left = np.interp(n - itd_samples, n, mono, left=0.0, right=0.0).astype(np.float32)
+            right = mono
+        else:
+            # Source is to the left, right ear is delayed
+            left = mono
+            right = np.interp(n + itd_samples, n, mono, left=0.0, right=0.0).astype(np.float32)
+
+        # Apply ILD (Interaural Level Difference) and Volume
         stereo = np.empty((frames, 2), dtype=np.float32)
-        stereo[:, 0] = mono * np.float32(left_gain * volume)
-        stereo[:, 1] = mono * np.float32(right_gain * volume)
+        stereo[:, 0] = left * np.float32(left_gain * volume)
+        stereo[:, 1] = right * np.float32(right_gain * volume)
         return stereo
 
     @classmethod
@@ -156,9 +198,12 @@ class SpatialTone:
         # Keep azimuth in [-180, 180).
         return ((float(azimuth_deg) + 180.0) % 360.0) - 180.0
 
-    @staticmethod
-    def _azimuth_to_equal_power_gains(azimuth_deg: float) -> tuple[float, float]:
-        # Map [-90, 90] to pan [-1, 1]; clamp rear hemisphere to nearest side.
-        pan = max(-1.0, min(1.0, float(azimuth_deg) / 90.0))
-        theta = (pan + 1.0) * (math.pi / 4.0)
-        return math.cos(theta), math.sin(theta)
+    def _calculate_spatial_params(self, azimuth_deg: float) -> tuple[float, float]:
+        """Calculates gains for ILD."""
+        theta = np.deg2rad(azimuth_deg)
+        # Simple ILD approximation up to +/- 6 dB as in the attached file
+        ild_db = 6.0 * np.sin(theta)
+        right_gain = 10.0 ** (ild_db / 20.0)
+        left_gain = 10.0 ** (-ild_db / 20.0)
+        return float(left_gain), float(right_gain)
+
