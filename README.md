@@ -1,6 +1,6 @@
 # AudioVision: Advanced Spatial Perception for the Visually Impaired
 
-The core concept is to transcend the limitations of natural human echolocation and existing assistive technologies by equipping users with high-bandwidth sensors to gather rich spatial data, which is then processed and translated into a custom, non-verbal audio language delivered via headphones. Unlike natural echolocation, this system offers high-resolution, long-range environmental detail, and an expressive audio language that maps diverse spatial variables to distinct audio cues.
+The core concept is to transcend the limitations of natural human echolocation and existing assistive technologies by equipping users with high-bandwidth sensors to gather rich spatial data, which is then processed and translated into a custom, non-verbal audio language delivered via headphones. Unlike natural echolocation, this system offers high-resolution, long-range environmental detail, and an expressive audio language that maps diverse spatial variables to distinct audio cues. Created for ELEC3442 Embedded Systems at the University of Hong Kong
 
 ## Functions & Goals
 
