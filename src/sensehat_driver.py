@@ -69,6 +69,7 @@ class SenseHatDriver:
         """Map a (rows, cols) float risk grid onto the 8×8 LED matrix.
 
         Risk 0.0 → green, Risk 1.0 → red. Nearest-neighbour mapping.
+        Horizontally mirrored for user perspective.
         Call from the main thread only.
         """
         grid_rows, grid_cols = risk_grid.shape
@@ -76,7 +77,9 @@ class SenseHatDriver:
         for led_r in range(8):
             gr = led_r * grid_rows // 8
             for led_c in range(8):
-                gc = led_c * grid_cols // 8
+                # Map column mirrored (8 - 1 - led_c)
+                mirrored_c = 7 - led_c
+                gc = mirrored_c * grid_cols // 8
                 risk = float(np.clip(risk_grid[gr, gc], 0.0, 1.0))
                 pixels.append([int(risk * 100), int((1.0 - risk) * 100), 0])
         self._sense.set_pixels(pixels)
@@ -84,8 +87,9 @@ class SenseHatDriver:
     def show_settings_hud(self, volume_level: int, nav_enabled: bool) -> None:
         """Display a settings HUD on the 8×8 LED matrix.
 
-        Left 4 columns: volume bar (fills bottom-up, green→red, 0–10 scale).
-        Right 4 columns: solid green = nav on, solid red = nav off.
+        Left 4 columns: navigation status (solid green = on, solid red = off).
+        Right 4 columns: volume bar (fills bottom-up, green→red, 0–10 scale).
+        (Note: mirrored from original: original had volume left, nav right).
         Call from the main thread only.
         """
         filled_rows = round(int(np.clip(volume_level, 0, 10)) * 8 / 10)
@@ -100,7 +104,9 @@ class SenseHatDriver:
             else:
                 vol_color = [7, 7, 7]
             for led_c in range(8):
-                pixels.append(list(vol_color) if led_c < 4 else list(nav_color))
+                # led_c 0-3: Left (now Nav)
+                # led_c 4-7: Right (now Vol)
+                pixels.append(list(nav_color) if led_c < 4 else list(vol_color))
         self._sense.set_pixels(pixels)
 
     def clear_leds(self) -> None:

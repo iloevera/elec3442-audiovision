@@ -85,16 +85,23 @@ class KeyboardInput:
     """
 
     def __init__(self) -> None:
-        self._fd = sys.stdin.fileno()
-        self._old_settings = termios.tcgetattr(self._fd)
-        tty.setcbreak(self._fd)
+        try:
+            self._fd = sys.stdin.fileno()
+            self._old_settings = termios.tcgetattr(self._fd)
+            tty.setcbreak(self._fd)
+            self._available = True
+        except (termios.error, ValueError):
+            self._available = False
 
     def close(self) -> None:
-        with suppress(Exception):
-            termios.tcsetattr(self._fd, termios.TCSADRAIN, self._old_settings)
+        if self._available:
+            with suppress(Exception):
+                termios.tcsetattr(self._fd, termios.TCSADRAIN, self._old_settings)
 
     def read_key(self) -> str | None:
         """Return 'up', 'down', 'left', 'right', 'enter', 'quit', or None."""
+        if not self._available:
+            return None
         readable, _, _ = select.select([sys.stdin], [], [], 0)
         if not readable:
             return None
