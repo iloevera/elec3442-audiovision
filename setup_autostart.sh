@@ -34,10 +34,18 @@ User=$USER_NAME
 WantedBy=multi-user.target
 EOF
 
-# Reload, enable and start
 echo "Enabling and starting service..."
 sudo systemctl daemon-reload
 sudo systemctl enable $SERVICE_NAME
+
+# Ensure user is in the input group for joystick access
+if ! groups $USER_NAME | grep -q "\binput\b"; then
+    echo "Adding $USER_NAME to 'input' group for joystick access..."
+    sudo gpasswd -a $USER_NAME input
+    echo "NOTE: Group changes may require a logout or restart to take full effect for the current session,"
+    echo "but the background service will pick it up immediately on start."
+fi
+
 sudo systemctl start $SERVICE_NAME
 
 echo "Setup complete. Service status:"

@@ -65,15 +65,28 @@ class SenseHatDriver:
 
     # ── LED matrix ────────────────────────────────────────────────────────────
 
-    def show_risk_grid(self, risk_grid: np.ndarray) -> None:
+    def show_risk_grid(self, risk_grid: np.ndarray, best_path_azimuth_deg: Optional[float] = None) -> None:
         """Map a (rows, cols) float risk grid onto the 8×8 LED matrix.
 
         Risk 0.0 → green, Risk 1.0 → red. Nearest-neighbour mapping.
         Horizontally mirrored for user perspective.
+        If best_path_azimuth_deg is provided, a 50% opacity blue vertical line is shown.
         Call from the main thread only.
         """
         grid_rows, grid_cols = risk_grid.shape
         pixels = []
+        
+        # Best path line column index (0-7)
+        # Assuming azimuth range is roughly -30 to 30 based on RealSense, but let's be robust.
+        # Processor uses -90 to 90 by default in config if not specified.
+        # Let's map -90 to 90 to 0-7 columns.
+        best_path_led_c = None
+        if best_path_azimuth_deg is not None:
+            # Map -90..90 to 0..7
+            # mirrored_c = 7 - led_c in the loop, so we need to account for that.
+            norm_az = (best_path_azimuth_deg + 90) / 180.0
+            best_path_led_c = int(np.clip(norm_az * 8, 0, 7))
+
         for led_r in range(8):
             gr = led_r * grid_rows // 8
             for led_c in range(8):
@@ -81,7 +94,17 @@ class SenseHatDriver:
                 mirrored_c = 7 - led_c
                 gc = mirrored_c * grid_cols // 8
                 risk = float(np.clip(risk_grid[gr, gc], 0.0, 1.0))
-                pixels.append([int(risk * 100), int((1.0 - risk) * 100), 0])
+                
+                r, g, b = int(risk * 100), int((1.0 - risk) * 100), 0
+                
+                if best_path_led_c is not None and led_c == best_path_led_c:
+                    # 50% opacity blue
+                    # (r, g, b) * 0.5 + (0, 0, 100) * 0.5
+                    r = r // 2
+                    g = g // 2
+                    b = 50
+                
+                pixels.append([r, g, b])
         self._sense.set_pixels(pixels)
 
     def show_settings_hud(self, volume_level: int, nav_enabled: bool) -> None:

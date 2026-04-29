@@ -27,6 +27,12 @@ import tty
 from contextlib import suppress
 from typing import TYPE_CHECKING
 
+try:
+    import evdev
+    from evdev import ecodes
+except ImportError:
+    evdev = None
+
 from src.navigation_processing import NavigationProcessor, NavigationProcessorConfig
 from src.realsense_driver import D435iDriver
 from src.sensehat_driver import SenseHatDriver
@@ -79,27 +85,75 @@ LED_UPDATE_INTERVAL_S = 0.2   # ≈ 5 Hz LED refresh
 # ── Non-blocking keyboard reader ──────────────────────────────────────────────
 
 class KeyboardInput:
-    """Non-blocking ANSI escape-sequence keyboard reader using cbreak stdin.
+    """Read joystick events directly from device file and fallback to terminal.
 
-    Parses arrow keys (output by the SenseHat joystick) and Enter / Q.
+    Parses arrow keys and Enter from SenseHat joystick (evdev) and terminal.
     """
 
     def __init__(self) -> None:
+        self._fd = None
+        self._old_settings = None
+        self._available = False
+        self._ev_device = None
+        self._queue = []
+        self._lock = threading.Lock()
+
+        # Try to open evdev joystick
+        if evdev:
+            try:
+                # Find the sensehat joystick device
+                devices = [evdev.InputDevice(path) for path in evdev.list_devices()]
+                for device in devices:
+                    if "sensehat" in device.name.lower() or "joystick" in device.name.lower():
+                        self._ev_device = device
+                        # Start background thread to read events
+                        self._ev_thread = threading.Thread(target=self._ev_loop, daemon=True)
+                        self._ev_thread.start()
+                        break
+            except Exception as e:
+                print(f"Warning: Could not open evdev joystick: {e}")
+
+        # Try terminal fallback
         try:
             self._fd = sys.stdin.fileno()
-            self._old_settings = termios.tcgetattr(self._fd)
-            tty.setcbreak(self._fd)
-            self._available = True
-        except (termios.error, ValueError):
-            self._available = False
+            if os.isatty(self._fd):
+                self._old_settings = termios.tcgetattr(self._fd)
+                tty.setcbreak(self._fd)
+                self._available = True
+        except (termios.error, ValueError, AttributeError):
+            pass
+
+    def _ev_loop(self) -> None:
+        """Background thread to read evdev events."""
+        try:
+            for event in self._ev_device.read_loop():
+                if event.type == ecodes.EV_KEY and event.value == 1:  # Key down
+                    key_map = {
+                        ecodes.KEY_UP: "up",
+                        ecodes.KEY_DOWN: "down",
+                        ecodes.KEY_LEFT: "left",
+                        ecodes.KEY_RIGHT: "right",
+                        ecodes.KEY_ENTER: "enter",
+                    }
+                    if event.code in key_map:
+                        with self._lock:
+                            self._queue.append(key_map[event.code])
+        except Exception:
+            pass
 
     def close(self) -> None:
-        if self._available:
+        if self._available and self._old_settings:
             with suppress(Exception):
                 termios.tcsetattr(self._fd, termios.TCSADRAIN, self._old_settings)
 
     def read_key(self) -> str | None:
         """Return 'up', 'down', 'left', 'right', 'enter', 'quit', or None."""
+        # 1. Check evdev queue
+        with self._lock:
+            if self._queue:
+                return self._queue.pop(0)
+
+        # 2. Check terminal (if available)
         if not self._available:
             return None
         readable, _, _ = select.select([sys.stdin], [], [], 0)
@@ -252,13 +306,20 @@ def main() -> None:
 
                 # ── Audio ──────────────────────────────────────────────────
                 if nav_enabled:
-                    audio.apply(analysis.column_states, now_s=time.monotonic())
+                    audio.apply(
+                        analysis.column_states,
+                        now_s=time.monotonic(),
+                        best_path_azimuth_deg=analysis.best_path_azimuth_deg,
+                    )
                     scale = volume_level / 10.0
                     for voice in audio._voices:
                         voice.set_volume(voice.volume * scale)
+                    # Apply scale to best path voice too
+                    audio._best_path_voice.set_volume(audio._best_path_voice.volume * scale)
                 else:
                     for voice in audio._voices:
                         voice.set_volume(0.0)
+                    audio._best_path_voice.set_volume(0.0)
 
                 # ── LED (throttled to ~5 Hz) ───────────────────────────────
                 now = time.monotonic()
@@ -267,7 +328,7 @@ def main() -> None:
                     if now - last_joystick_time < SETTINGS_HUD_DURATION_S:
                         imu.show_settings_hud(volume_level, nav_enabled)
                     else:
-                        imu.show_risk_grid(analysis.risk_grid)
+                        imu.show_risk_grid(analysis.risk_grid, best_path_azimuth_deg=analysis.best_path_azimuth_deg)
         finally:
             driver.stop()
 

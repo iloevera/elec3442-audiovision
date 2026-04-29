@@ -71,21 +71,6 @@ The system processes 3D depth data from an Intel RealSense camera and translates
 python main.py
 ```
 
-### Automatic Startup (Raspberry Pi)
-To configure the application to run automatically on power-on using systemd:
-1. Run the setup script:
-   ```bash
-   ./setup_autostart.sh
-   ```
-2. To restart the service manually:
-   ```bash
-   ./restart_service.sh
-   ```
-3. To view logs:
-   ```bash
-   sudo journalctl -u audiovision.service -f
-   ```
-
 ### Controls (Sense HAT Joystick / Keyboard)
 - **Up / Down Arrow**: Adjust volume.
 - **Enter**: Toggle navigation audio on/off.
