@@ -1,9 +1,15 @@
-"""Rotating two-tone demo for SpatialTone."""
-
 from __future__ import annotations
+
+import sys
+import os
+"""Rotating two-tone demo for SpatialTone."""
 
 import math
 import time
+
+# Add project root to path if running directly
+if __name__ == "__main__":
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.audio_spatial_tone import SpatialTone
 
@@ -20,11 +26,13 @@ def run_demo() -> None:
         initial_pitch_hz=left_base_hz,
         initial_volume=0.25,
         initial_azimuth_deg=-90,
+        waveform="sine",
     )
     right_tone = SpatialTone(
         initial_pitch_hz=right_base_hz,
         initial_volume=0.20,
         initial_azimuth_deg=90,
+        waveform="triangle",
     )
     left_tone.start()
     right_tone.start()

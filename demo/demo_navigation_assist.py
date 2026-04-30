@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+import os
 import argparse
 from contextlib import suppress
 from dataclasses import dataclass
@@ -9,8 +11,13 @@ from typing import TYPE_CHECKING
 import cv2
 import numpy as np
 
+# Add project root to path if running directly
+if __name__ == "__main__":
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from src.navigation_processing import NavigationFrameAnalysis, NavigationProcessor, NavigationProcessorConfig
 from src.realsense_driver import D435iDriver
+from src.sensehat_driver import SenseHatDriver
 
 from src.pi_trip_camera import PiTripCamera
 from src.pi_trip_hazard import PiTripHazardDetector
@@ -74,8 +81,8 @@ def resolve_mode_settings(mode: str) -> RuntimeModeSettings:
     return RuntimeModeSettings(
         depth_size=(640, 480),
         color_size=(640, 480),
-        depth_fps=60,
-        color_fps=60,
+        depth_fps=30,
+        color_fps=30,
         align_depth_to_color=True,
         processor_config=NavigationProcessorConfig(),
         preview_default=True,
@@ -108,22 +115,24 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def run_demo() -> None:
-    args = parse_args()
-    mode = args.profile or args.mode
+def run_demo(args: argparse.Namespace | None = None) -> None:
+    if args is None:
+        args = parse_args()
+    
+    mode = getattr(args, "profile", None) or args.mode
     settings = resolve_mode_settings(mode)
 
     preview_enabled = settings.preview_default
-    if args.preview:
+    if getattr(args, "preview", False):
         preview_enabled = True
-    if args.no_preview:
+    if getattr(args, "no_preview", False):
         preview_enabled = False
 
-    audio_enabled = not args.no_audio
+    audio_enabled = not getattr(args, "no_audio", False)
     preview_stride = 1
     if preview_enabled and mode == "pi_debug":
         camera_fps = float(settings.color_fps)
-        target_preview_fps = max(1.0, float(args.preview_fps))
+        target_preview_fps = max(1.0, float(getattr(args, "preview_fps", 10.0)))
         preview_stride = max(1, int(round(camera_fps / target_preview_fps)))
 
     if preview_enabled:
@@ -133,6 +142,10 @@ def run_demo() -> None:
     processor = NavigationProcessor(config=settings.processor_config)
     audio: NavigationAudioController | None = None
     frame_index = 0
+
+    # Initialize SenseHatDriver for gravity tracking
+    imu = SenseHatDriver()
+    imu.start()
     
     pi_audio: NavigationAudioController | None = None
     trip_camera = PiTripCamera(camera_index=0)
@@ -153,17 +166,21 @@ def run_demo() -> None:
                         raise RuntimeError("Capture thread stopped after an error") from driver.last_error
                     continue
 
+                gravity_unit = imu.get_gravity_unit()
+
                 if audio_enabled and audio is None:
                     # Delay audio import/startup until after first camera bundle arrives.
                     from src.navigation_audio import NavigationAudioController, NavigationAudioConfig
 
                     audio = NavigationAudioController(column_count=processor.config.cols, config= NavigationAudioConfig(use_pulse_gating=False),)
                     audio.start()
-
                     pi_audio = NavigationAudioController(column_count=processor.config.cols, config= NavigationAudioConfig(use_pulse_gating=True),)
                     pi_audio.start()
 
-                analysis = processor.process_bundle(bundle)
+                analysis = processor.process_bundle(bundle, gravity_unit=gravity_unit)
+               
+
+                #analysis = processor.process_bundle(bundle)
 
                 trip_frame = trip_camera.read()
                 trip_detections = ()
@@ -189,6 +206,7 @@ def run_demo() -> None:
                         break
                 frame_index += 1
     finally:
+        imu.stop()
         if audio is not None:
             audio.stop()
         if pi_audio is not None:

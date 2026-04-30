@@ -11,8 +11,8 @@ from .navigation_processing import NavigationColumnState
 class NavigationAudioConfig:
     sample_rate: int = 48_000
     block_size: int = 512
-    base_volume: float = 0.22
-    output_gain: float = 2.0
+    base_volume: float = 0.50
+    output_gain: float = 8.0
     min_audible_volume: float = 0.08
     near_priority_distance_m: float = 0.50
     ttc_priority_horizon_s: float = 5.0
@@ -32,6 +32,14 @@ class NavigationAudioController:
             )
             for _ in range(column_count)
         ]
+        self._best_path_voice = SpatialTone(
+            initial_pitch_hz=440.0,
+            initial_volume=0.0,
+            initial_azimuth_deg=0.0,
+            waveform="square",
+            sample_rate=self.config.sample_rate,
+            block_size=self.config.block_size,
+        )
         self._running = False
 
     def start(self) -> None:
@@ -39,6 +47,7 @@ class NavigationAudioController:
             return
         for voice in self._voices:
             voice.start()
+        self._best_path_voice.start()
         self._running = True
 
     def stop(self) -> None:
@@ -46,13 +55,19 @@ class NavigationAudioController:
             return
         for voice in self._voices:
             voice.stop()
+        self._best_path_voice.stop()
         self._running = False
 
-    def apply(self, column_states: tuple[NavigationColumnState, ...], now_s: float | None = None) -> None:
+    def apply(
+        self,
+        column_states: tuple[NavigationColumnState, ...],
+        now_s: float | None = None,
+        best_path_azimuth_deg: float | None = None,
+    ) -> None:
         if not self._running:
             raise RuntimeError("NavigationAudioController.start() must be called before apply()")
 
-        _ = time.monotonic() if now_s is None else float(now_s)
+        current_time_s = time.monotonic() if now_s is None else float(now_s)
         ranked_columns = sorted(column_states, key=lambda state: state.risk_score, reverse=True)
 
         high_priority_columns: list[int] = []

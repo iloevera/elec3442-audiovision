@@ -58,6 +58,8 @@ class NavigationFrameAnalysis:
     percentile_depth_grid_m: np.ndarray
     ttc_grid_s: np.ndarray
     risk_grid: np.ndarray
+    best_path_azimuth_deg: Optional[float] = None
+    best_path_score: float = 0.0
 
 
 @dataclass
@@ -145,13 +147,15 @@ class NavigationProcessor:
         self._frame_index = 0
         self._cached_ground_plane: Optional[GroundPlaneEstimate] = None
 
-    def process_bundle(self, bundle: FrameBundle) -> NavigationFrameAnalysis:
+    def process_bundle(self, bundle: FrameBundle, gravity_unit: Optional[np.ndarray] = None) -> NavigationFrameAnalysis:
         depth_m = bundle.depth.image.astype(np.float32) * float(bundle.depth.depth_scale)
         valid_mask = np.isfinite(depth_m)
         valid_mask &= depth_m >= self.config.min_depth_m
         valid_mask &= depth_m <= self.config.max_depth_m
 
-        gravity_unit = self._estimate_gravity_unit(bundle)
+        if gravity_unit is not None:
+             gravity_unit = gravity_unit.astype(np.float32)
+
         full_points, _ = self._depth_to_points(
             depth_m=depth_m,
             intrinsics=bundle.depth.intrinsics,
@@ -233,6 +237,46 @@ class NavigationProcessor:
                 )
 
         column_states = self._build_column_states(cell_states=cell_states)
+
+        # ── Best path detection ─────────────────────────────────────────────
+        # Direction with the least obstructions.
+        # Requirement: "best path" is the direction with least obstructions.
+        # "no beeping in the case of there being no obstructions anywhere"
+        # "no beeping also if there are no columns without obstructions (items within 1m)"
+
+        best_path_azimuth_deg = None
+        best_path_score = 0.0
+
+        # Check if there are ANY obstacles anywhere (obstacle_mask suggests obstacles)
+        any_obstacles = np.any(obstacle_mask)
+
+        if any_obstacles:
+            # Check for columns without obstructions within 1m.
+            # We can use the percentile_depth_grid_m to see if any cell in a vertical slice is < 1m.
+            # Since cols=5, let's find the best path.
+            # User says "can have more precise azimuth", but we're restricted by the processing grid here
+            # unless we search the raw depth_m. To keep it simple and consistent with navigation,
+            # let's find the column with the maximum average clearance.
+
+            # col_depths: for each column, what is the minimum distance to an obstacle?
+            col_min_depths = np.nanmin(percentile_depth_grid, axis=0) # (cols,)
+
+            # "items within 1m" means if all columns have something within 1m, no beeping.
+            if not np.all(col_min_depths < 1.0):
+                # At least one column is clear beyond 1m.
+                # Find the column with the largest min depth.
+                best_col_idx = int(np.nanargmax(np.nan_to_num(col_min_depths, nan=0.0)))
+                # If there are multiple, nanargmax takes the first.
+                # However, if some are NaN (completely clear), we should prefer them.
+                nan_mask = np.isnan(col_min_depths)
+                if np.any(nan_mask):
+                    # Pick the middle-most clear column
+                    nan_indices = np.where(nan_mask)[0]
+                    best_col_idx = int(nan_indices[len(nan_indices) // 2])
+
+                best_path_azimuth_deg = float(column_states[best_col_idx].azimuth_deg)
+                best_path_score = 1.0
+
         self._frame_index += 1
         return NavigationFrameAnalysis(
             timestamp_s=timestamp_s,
@@ -249,6 +293,8 @@ class NavigationProcessor:
             percentile_depth_grid_m=percentile_depth_grid,
             ttc_grid_s=ttc_grid,
             risk_grid=risk_grid,
+            best_path_azimuth_deg=best_path_azimuth_deg,
+            best_path_score=best_path_score,
         )
 
     def _select_ground_plane(
@@ -269,17 +315,6 @@ class NavigationProcessor:
                 gravity_unit=gravity_unit,
             )
         return self._cached_ground_plane
-
-    def _estimate_gravity_unit(self, bundle: FrameBundle) -> Optional[np.ndarray]:
-        accel = bundle.latest_accel
-        if accel is None:
-            return None
-
-        vector = accel.xyz.astype(np.float64)
-        norm = float(np.linalg.norm(vector))
-        if norm < 1e-6:
-            return None
-        return (vector / norm).astype(np.float32)
 
     @staticmethod
     def _depth_to_points(

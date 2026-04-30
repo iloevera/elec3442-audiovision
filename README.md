@@ -1,108 +1,92 @@
-# AudioVision Prototype
+# AudioVision: Advanced Spatial Perception for the Visually Impaired
 
-Wearable synthetic audio-vision prototype for assistive navigation.
+The core concept is to transcend the limitations of natural human echolocation and existing assistive technologies by equipping users with high-bandwidth sensors to gather rich spatial data, which is then processed and translated into a custom, non-verbal audio language delivered via headphones. Unlike natural echolocation, this system offers high-resolution, long-range environmental detail, and an expressive audio language that maps diverse spatial variables to distinct audio cues. Created for ELEC3442 Embedded Systems at the University of Hong Kong
 
-This repository contains a real-time pipeline that senses the environment with depth + IMU data and converts spatial risk into directional audio cues.
+## Functions & Goals
 
-## Project Snapshot
+The primary goal is to empower blind individuals with a "sixth sense" that allows intuitive environmental perception. The system aims to:
+- **Provide Real-Time Spatial Awareness**: Accurately convey object location, movement, and environmental features.
+- **Enhance Safety**: Proactively alert users to collision risks, including predictive non-collision logic.
+- **Facilitate Independent Navigation**: Guide users along paths, around obstacles, and through complex intersections.
+- **Maintain Low Profile**: Be inconspicuous and socially acceptable.
+- **Be Intuitive & Trainable**: Employ a carefully designed audio language that minimizes cognitive load.
 
-This project tackles the navigation information gap left by cane-range sensing and limited auditory bandwidth in crowded real-world environments. The vision is a low-profile wearable "audio vision" system that delivers an intuitive, trainable spatial cue stream. The prototype goal is to provide real-time, direction-aware obstacle awareness and early hazard signaling (distance + TTC + ground context) using depth/IMU sensing and spatial audio.
+## Technical Details
 
-## Current Scope in This Repo
+The system processes 3D depth data from an Intel RealSense camera and translates it into spatialized audio feedback.
 
-Implemented now:
-1. Intel RealSense D435i depth/color/IMU capture.
-2. Ground-plane estimation with IMU guidance.
-3. Grid-based obstacle analysis with percentile depth and TTC metrics.
-4. Spatial multi-voice audio cue generation.
-5. Interactive demos for preview, audio behavior, and end-to-end navigation.
+### Key Features
+- **Data Richness**: High-resolution, long-range detail, sensitive to small objects, and immune to ambient noise.
+- **Expressive Audio Language**: Maps depth, azimuth, velocity, and collision risk to pitch, panning, timbre, and urgency.
+- **High Update Rate**: Audio feedback refreshed at 30-60 Hz, providing significantly more spatial samples per second.
+- **Multi-Sensor Fusion**: Integrates data from various sensors (Depth, IMU) for robust perception.
 
-Future-oriented ideas (not fully implemented here):
-1. Multi-camera fusion.
-2. Richer environmental affordance layers (crossings, signage, tripping hazards).
+## Project Structure
 
-## Project Layout
+- `main.py`: Primary application entry point for the assistive navigation system.
+- `src/realsense_driver.py`: Interface for Intel RealSense D400-series depth cameras.
+- `src/navigation_processing.py`: Core logic for obstacle detection, ground plane estimation, and risk assessment.
+- `src/navigation_audio.py`: Translates spatial data into audio cues.
+- `src/sensehat_driver.py`: Driver for the Raspberry Pi Sense HAT (LED matrix and Joystick).
+- `src/audio_spatial_tone.py`: Low-level audio synthesis and spatialization.
 
-- src/realsense_driver.py: RealSense capture driver and frame bundle API.
-- src/navigation_processing.py: obstacle/ground analysis and risk scoring.
-- src/navigation_audio.py: column-level audio controller.
-- src/audio_spatial_tone.py: controllable spatial tone voice.
-- src/audio_mixer.py: shared real-time mixer for multiple voices.
-- demo_realsense_preview.py: camera and IMU OpenCV preview.
-- demo_audio_rotating_tones.py: rotating stereo tone demonstration.
-- demo_navigation_assist.py: end-to-end navigation demo with optional preview.
+## Setup and Installation
 
-## Requirements
+### Prerequisites
+- Python 3.10+
+- Intel RealSense D435/D435i camera
+- Raspberry Pi (optional, for Sense HAT integration)
+- Linux environment (tested on Raspberry Pi OS)
 
-1. Windows with Python 3.10 or 3.11.
-2. Intel RealSense D435i for camera workflows.
-3. Speakers or headphones for audio demos.
-4. Python dependencies from requirements.txt.
+### Installation
+1. Clone the repository.
+2. Install the required dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. Install `pyrealsense2` by compiling from source (required for some platforms like Raspberry Pi):
+   ```bash
+   sudo apt-get install cmake libusb-1.0-0-dev pkg-config libgtk-3-dev libglfw3-dev libglu1-mesa-dev libgl1-mesa-dev
+   git clone https://github.com/IntelRealSense/librealsense.git
+   cd librealsense
+   mkdir build && cd build
+   cmake .. -DBUILD_PYTHON_BINDINGS:bool=true -DPYTHON_EXECUTABLE=$(which python3)
+   make -j$(nproc)
+   sudo make install
+   
+   # After compilation, copy the binaries to your virtual environment if applicable:
+   # Replace the path and filenames with the ones generated on your system
+   export VENV_PACKAGES=$(python -c "import site; print(site.getsitepackages()[0])")
+   cp Release/pyrealsense2.cpython-*.so $VENV_PACKAGES/
+   cp Release/librealsense2.so* $VENV_PACKAGES/
+   
+   # Verify installation
+   python -c "import pyrealsense2 as rs; print('Success')"
+   ```
 
-## Setup
+## Usage
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+### Running the Main Application
+```bash
+python main.py
 ```
 
-Important Raspberry Pi note: `pyrealsense2` is not available from `pip` on Raspberry Pi in the way it is on desktop platforms. On Pi, build `librealsense` and the Python bindings from source instead of relying on `pip install`. Follow the upstream Intel RealSense Raspberry Pi guide:
+### Controls (Sense HAT Joystick / Keyboard)
+- **Up / Down Arrow**: Adjust volume.
+- **Enter**: Toggle navigation audio on/off.
+- **Q / Escape**: Quit application.
 
-https://github.com/realsenseai/librealsense/blob/master/doc/installation_raspbian.md
+### Demos
+Several standalone scripts are available to test individual components:
+- `demo.py`: General entry point for demos.
+- `demo/demo_realsense_preview.py`: Visual preview of the depth and color streams.
+- `demo/demo_imu.py`: Displays IMU and orientation data from the Sense HAT.
+- `demo/demo_audio_rotating_tones.py`: Tests spatial audio positioning.
+- `demo/demo_navigation_assist.py`: Core navigation logic demo.
 
-In practice, that means installing the system build dependencies, building and installing `librealsense`, then rebuilding with `-DBUILD_PYTHON_BINDINGS=bool:true` and running `sudo make install` so `pyrealsense2` is installed into `/usr/local`.
+## License
+Refer to the [LICENSE](LICENSE) file for details.
 
-If installing `pyrealsense2` fails on desktop, install the Intel RealSense runtime/SDK first, then retry.
-
-## Run Demos
-
-RealSense preview:
-
-```powershell
-python .\demo_realsense_preview.py
-```
-
-Audio rotating tones:
-
-```powershell
-python .\demo_audio_rotating_tones.py
-```
-
-Navigation assist:
-
-```powershell
-python .\demo_navigation_assist.py
-```
-
-Navigation runtime modes:
-
-```powershell
-python .\demo_navigation_assist.py --mode desktop_debug
-python .\demo_navigation_assist.py --mode pi_normal
-python .\demo_navigation_assist.py --mode pi_debug --preview-fps 8
-```
-
-Useful flags:
-1. --preview
-2. --no-preview
-3. --no-audio
-
-## Audio Encoding (Current)
-
-At the prototype stage, cues are intentionally simple and consistent:
-1. Azimuth maps to stereo position (left/right direction).
-2. Risk and proximity drive pitch and loudness.
-3. TTC urgency increases pulse rate.
-4. Column-based scene partitioning keeps cue density manageable.
-
-## Minimal Import Examples
-
-```python
-from src.realsense_driver import D435iDriver
-from src.audio_spatial_tone import SpatialTone
-```
 
 ## Safety and Research Note
 

@@ -1,14 +1,21 @@
 from __future__ import annotations
 
+import sys
+import os
 from contextlib import suppress
 
 import cv2
 import numpy as np
 
-from src.realsense_driver import D435iDriver, FrameBundle, IMUSample
+# Add project root to path if running directly
+if __name__ == "__main__":
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from src.realsense_driver import D435iDriver, FrameBundle
+from src.sensehat_driver import SenseHatDriver
 
 
-WINDOW_NAME = "RealSense D435i"
+WINDOW_NAME = "RealSense D435"
 HEADER_HEIGHT = 72
 FOOTER_HEIGHT = 164
 WINDOW_SIZE = (1440, 940)
@@ -17,6 +24,9 @@ WINDOW_SIZE = (1440, 940)
 def run_preview(window_name: str = WINDOW_NAME) -> None:
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(window_name, *WINDOW_SIZE)
+
+    imu = SenseHatDriver()
+    imu.start()
 
     with D435iDriver() as driver:
         try:
@@ -27,19 +37,20 @@ def run_preview(window_name: str = WINDOW_NAME) -> None:
                         raise RuntimeError("Capture thread stopped after an error") from driver.last_error
                     continue
 
-                preview = compose_preview_frame(bundle=bundle, imu_enabled=driver.imu_enabled_runtime)
+                preview = compose_preview_frame(bundle=bundle, imu=imu)
                 cv2.imshow(window_name, preview)
 
                 key = cv2.waitKey(1) & 0xFF
                 if key in (27, ord("q")):
                     break
         finally:
+            imu.stop()
             with suppress(Exception):
                 cv2.destroyWindow(window_name)
             cv2.destroyAllWindows()
 
 
-def compose_preview_frame(bundle: FrameBundle, imu_enabled: bool) -> np.ndarray:
+def compose_preview_frame(bundle: FrameBundle, imu: SenseHatDriver) -> np.ndarray:
     depth_color = cv2.applyColorMap(
         cv2.convertScaleAbs(bundle.depth.image, alpha=0.03),
         cv2.COLORMAP_JET,
@@ -78,7 +89,7 @@ def compose_preview_frame(bundle: FrameBundle, imu_enabled: bool) -> np.ndarray:
 
     cv2.putText(
         preview,
-        "Intel RealSense D435i Live Preview",
+        "Intel RealSense D435 Live Preview",
         (18, 30),
         cv2.FONT_HERSHEY_DUPLEX,
         0.9,
@@ -118,22 +129,26 @@ def compose_preview_frame(bundle: FrameBundle, imu_enabled: bool) -> np.ndarray:
         cv2.LINE_AA,
     )
 
+    gravity = imu.get_gravity_unit()
+    imu_online = gravity is not None
+
     draw_status_chip(
         preview,
-        label=("IMU ONLINE" if imu_enabled else "IMU OFF"),
+        label=("IMU ONLINE" if imu_online else "IMU OFF"),
         origin=(width - 194, 18),
         size=(176, 34),
-        color=((48, 166, 98) if imu_enabled else (88, 88, 88)),
+        color=((48, 166, 98) if imu_online else (88, 88, 88)),
     )
 
-    accel_lines = format_imu_lines("ACCEL", bundle.latest_accel, "m/s^2")
-    gyro_lines = format_imu_lines("GYRO", bundle.latest_gyro, "rad/s")
+    if gravity is not None:
+        gravity_str = f"SenseHat Gravity: x={gravity[0]: .3f}  y={gravity[1]: .3f}  z={gravity[2]: .3f}"
+    else:
+        gravity_str = "SenseHat Gravity: waiting for data"
+
     footer_lines = [
-        f"Bundle IMU samples: {len(bundle.imu_samples)}",
         f"Depth frame #{bundle.depth.frame_number} at {bundle.depth.timestamp_ms:8.2f} ms",
         f"Color frame #{bundle.color.frame_number} at {bundle.color.timestamp_ms:8.2f} ms",
-        *accel_lines,
-        *gyro_lines,
+        gravity_str,
         "Press Q or Esc to exit",
     ]
 
@@ -188,17 +203,6 @@ def draw_status_chip(
         2,
         cv2.LINE_AA,
     )
-
-
-def format_imu_lines(label: str, sample: IMUSample | None, units: str) -> list[str]:
-    if sample is None:
-        return [f"{label}: waiting for data"]
-
-    magnitude = float(np.linalg.norm(sample.xyz))
-    return [
-        f"{label}: x={sample.xyz[0]: .3f}  y={sample.xyz[1]: .3f}  z={sample.xyz[2]: .3f} {units}",
-        f"{label}: |v|={magnitude: .3f} {units}  frame #{sample.frame_number}  ts={sample.timestamp_ms:8.2f} ms",
-    ]
 
 
 if __name__ == "__main__":
